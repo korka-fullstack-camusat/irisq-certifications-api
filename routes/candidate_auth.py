@@ -2,12 +2,12 @@
 Authentification dédiée aux candidats.
 
 Flow:
-- À la soumission d'une candidature (routes/responses.py), un mot de passe
-  par défaut est généré, haché (bcrypt) et stocké, puis envoyé par email
-  au candidat avec son ID Public.
-- Le candidat se connecte avec (public_id + password).
-- À la première connexion (must_change_password=True), le frontend lui
-  impose de changer son mot de passe via POST /api/candidate/change-password.
+- Le candidat crée un compte via POST /api/candidate/register
+  (email + mot de passe + informations personnelles).
+- Il se connecte via POST /api/candidate/login (email + mot de passe).
+- Le token JWT contient l'ObjectId du document dans candidate_accounts.
+- Il peut ensuite voir les certifications disponibles et candidater.
+à une formation. Chaque candidature génère un matricule unique (public_id).
 """
 
 import secrets
@@ -21,7 +21,7 @@ from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
 from database import get_database
-from email_service import notify_candidate_password_reset
+from models.candidate_account import CandidateAccountCreate, CandidateAccountOut
 from utils.security import SECRET_KEY, ALGORITHM, verify_password, get_password_hash
 
 router = APIRouter()
@@ -33,14 +33,14 @@ _candidate_scheme = OAuth2PasswordBearer(tokenUrl="/api/candidate/login", auto_e
 
 
 class CandidateLoginIn(BaseModel):
-    public_id: str
+    email: EmailStr
     password: str
 
 
 class CandidateLoginOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    response_id: str
+    account_id: str
     must_change_password: bool = False
 
 
@@ -50,7 +50,6 @@ class CandidateChangePasswordIn(BaseModel):
 
 
 class CandidateForgotPasswordIn(BaseModel):
-    public_id: str
     email: EmailStr
 
 
@@ -58,16 +57,16 @@ class CandidateForgotPasswordOut(BaseModel):
     message: str
 
 
-def create_candidate_token(response_id: str) -> str:
+def create_candidate_token(account_id: str) -> str:
     expire = datetime.utcnow() + timedelta(days=CANDIDATE_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": response_id, "aud": CANDIDATE_TOKEN_AUDIENCE, "exp": expire}
+    payload = {"sub": account_id, "aud": CANDIDATE_TOKEN_AUDIENCE, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 async def get_current_candidate(token: Optional[str] = Depends(_candidate_scheme)):
     creds_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Candidate authentication required",
+        detail="Authentification candidat requise",
         headers={"WWW-Authenticate": "Bearer"},
     )
     if not token:
@@ -76,108 +75,112 @@ async def get_current_candidate(token: Optional[str] = Depends(_candidate_scheme
         payload = jwt.decode(
             token, SECRET_KEY, algorithms=[ALGORITHM], audience=CANDIDATE_TOKEN_AUDIENCE
         )
-        response_id = payload.get("sub")
-        if not response_id or not ObjectId.is_valid(response_id):
+        account_id = payload.get("sub")
+        if not account_id or not ObjectId.is_valid(account_id):
             raise creds_error
     except JWTError:
         raise creds_error
 
     db = get_database()
-    response = await db["responses"].find_one({"_id": ObjectId(response_id)})
-    if not response:
+    account = await db["candidate_accounts"].find_one({"_id": ObjectId(account_id)})
+    if not account:
         raise creds_error
-    if response.get("credentials_blocked"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Votre accès a été désactivé suite au refus de votre candidature.",
-        )
-    return response
+    return account
+
+
+@router.post("/register", response_model=CandidateAccountOut, status_code=201)
+async def candidate_register(payload: CandidateAccountCreate = Body(...)):
+    db = get_database()
+    email = payload.email.strip().lower()
+
+    existing = await db["candidate_accounts"].find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Un compte existe déjà avec cet email.")
+
+    account_id_short = f"ACC-{secrets.token_hex(4).upper()}"
+    now = datetime.utcnow()
+    doc = {
+        "email": email,
+        "hashed_password": get_password_hash(payload.password),
+        "first_name": payload.first_name.strip(),
+        "last_name": payload.last_name.strip(),
+        "phone": (payload.phone or "").strip() or None,
+        "profile": (payload.profile or "").strip() or None,
+        "date_of_birth": (payload.date_of_birth or "").strip() or None,
+        "account_id": account_id_short,
+        "created_at": now,
+        "must_change_password": False,
+    }
+    result = await db["candidate_accounts"].insert_one(doc)
+    return CandidateAccountOut(
+        id=str(result.inserted_id),
+        account_id=account_id_short,
+        email=email,
+        first_name=doc["first_name"],
+        last_name=doc["last_name"],
+        phone=doc["phone"],
+        profile=doc["profile"],
+        date_of_birth=doc["date_of_birth"],
+        created_at=now.isoformat(),
+    )
 
 
 @router.post("/login", response_model=CandidateLoginOut)
 async def candidate_login(payload: CandidateLoginIn = Body(...)):
     db = get_database()
-    public_id = payload.public_id.strip()
-    if not public_id or not payload.password:
-        raise HTTPException(status_code=400, detail="ID public et mot de passe requis")
+    email = payload.email.strip().lower()
 
-    response = await db["responses"].find_one({"public_id": public_id})
-    if not response:
-        raise HTTPException(status_code=401, detail="Identifiants invalides")
+    account = await db["candidate_accounts"].find_one({"email": email})
+    if not account or not verify_password(payload.password, account.get("hashed_password", "")):
+        raise HTTPException(status_code=401, detail="Email ou mot de passe invalide")
 
-    password_hash = response.get("password_hash")
-    if not password_hash or not verify_password(payload.password, password_hash):
-        raise HTTPException(status_code=401, detail="Identifiants invalides")
-
-    if response.get("credentials_blocked"):
-        raise HTTPException(
-            status_code=403,
-            detail="Votre candidature a été rejetée. Vos identifiants ont été désactivés.",
-        )
-
-    response_id = str(response["_id"])
-    token = create_candidate_token(response_id)
+    account_id = str(account["_id"])
+    token = create_candidate_token(account_id)
     return CandidateLoginOut(
         access_token=token,
-        response_id=response_id,
-        must_change_password=bool(response.get("must_change_password", False)),
+        account_id=account_id,
+        must_change_password=bool(account.get("must_change_password", False)),
     )
 
 
 _GENERIC_FORGOT_MESSAGE = (
-    "Si un compte correspond à ces informations, un nouveau mot de passe "
-    "provisoire vient d'être envoyé à l'adresse email enregistrée."
+    "Si un compte correspond à cet email, un nouveau mot de passe "
+    "provisoire vient d’être envoyé."
 )
 
 
 @router.post("/forgot-password", response_model=CandidateForgotPasswordOut)
 async def candidate_forgot_password(payload: CandidateForgotPasswordIn = Body(...)):
-    """Generate a fresh temporary password and email it to the candidate.
-
-    Always returns the same generic message (even if no record matches)
-    to avoid leaking whether a given public_id / email combination exists.
-    """
     db = get_database()
-    public_id = payload.public_id.strip()
     email = payload.email.strip().lower()
-
-    if not public_id or not email:
+    if not email:
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
-    response = await db["responses"].find_one({"public_id": public_id})
-    if not response:
+    account = await db["candidate_accounts"].find_one({"email": email})
+    if not account:
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
-
-    stored_email = (response.get("email") or "").strip().lower()
-    if not stored_email or stored_email != email:
-        return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
-
-    if response.get("credentials_blocked"):
-        # Match the login endpoint: explicitly refuse blocked candidates.
-        raise HTTPException(
-            status_code=403,
-            detail="Votre candidature a été rejetée. Vos identifiants ont été désactivés.",
-        )
 
     new_password = secrets.token_urlsafe(6)[:8]
-    await db["responses"].update_one(
-        {"_id": response["_id"]},
+    await db["candidate_accounts"].update_one(
+        {"_id": account["_id"]},
         {"$set": {
-            "password_hash": get_password_hash(new_password),
+            "hashed_password": get_password_hash(new_password),
             "must_change_password": True,
             "password_reset_at": datetime.utcnow(),
         }},
     )
 
     try:
+        from email_service import notify_candidate_password_reset
+        full_name = f"{account.get('first_name', '')} {account.get('last_name', '')}".strip() or "Candidat"
         notify_candidate_password_reset(
-            stored_email,
-            response.get("name") or "Candidat",
-            public_id,
+            email,
+            full_name,
+            account.get("account_id", ""),
             new_password,
         )
     except Exception as e:
-        print(f"[EMAIL] Password reset email failed for {stored_email}: {e}")
+        print(f"[EMAIL] Password reset email failed for {email}: {e}")
 
     return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
@@ -190,29 +193,27 @@ async def candidate_change_password(
     if payload.current_password == payload.new_password:
         raise HTTPException(
             status_code=400,
-            detail="Le nouveau mot de passe doit être différent de l'ancien.",
+            detail="Le nouveau mot de passe doit être différent de l’ancien.",
         )
 
-    password_hash = candidate.get("password_hash")
-    if not password_hash or not verify_password(payload.current_password, password_hash):
+    if not verify_password(payload.current_password, candidate.get("hashed_password", "")):
         raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect")
 
     db = get_database()
     new_hash = get_password_hash(payload.new_password)
-    await db["responses"].update_one(
+    await db["candidate_accounts"].update_one(
         {"_id": candidate["_id"]},
         {"$set": {
-            "password_hash": new_hash,
+            "hashed_password": new_hash,
             "must_change_password": False,
             "password_changed_at": datetime.utcnow(),
         }},
     )
 
-    # Rotate the token to invalidate any session tied to the old password state.
-    response_id = str(candidate["_id"])
-    token = create_candidate_token(response_id)
+    account_id = str(candidate["_id"])
+    token = create_candidate_token(account_id)
     return CandidateLoginOut(
         access_token=token,
-        response_id=response_id,
+        account_id=account_id,
         must_change_password=False,
     )

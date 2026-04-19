@@ -5,7 +5,8 @@ from datetime import datetime
 
 class ResponseBase(BaseModel):
     form_id: str
-    session_id: Optional[str] = None  # New: session this candidature belongs to
+    session_id: Optional[str] = None
+    account_id: Optional[str] = None  # lien vers le compte candidat
     name: str
     email: EmailStr
     profile: str
@@ -34,12 +35,9 @@ class ResponseBase(BaseModel):
     candidate_photos: Optional[list[str]] = None
 
     # Document validation checklist
-    # Shape: { "<document_key>": { "valid": true|false, "notes": "..." } }
     documents_validation: Optional[Dict[str, Any]] = None
 
-    # Exam logistics chosen at application time.
-    # exam_mode : "online" | "onsite"              (En ligne / Présentiel)
-    # exam_type : "direct" | "after_formation"     (Examen direct / Examen après formation IRISQ)
+    # Exam logistics
     exam_mode: Optional[str] = None
     exam_type: Optional[str] = None
 
