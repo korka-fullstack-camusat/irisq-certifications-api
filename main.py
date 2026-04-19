@@ -5,7 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import os
 
 from database import connect_to_mongo, close_mongo_connection
-from routes import forms, responses, upload, exams, auth, sessions, candidate, candidate_auth
+from routes import forms, responses, upload, exams, auth, sessions, candidate, candidate_auth, candidate_account
 
 from rich.console import Console
 from rich.panel import Panel
@@ -100,3 +100,4 @@ app.include_router(upload.router, prefix="/api", tags=["Uploads"])
 app.include_router(exams.router, prefix="/api", tags=["Exams"])
 app.include_router(candidate_auth.router, prefix="/api/candidate", tags=["Candidate Auth"])
 app.include_router(candidate.router, prefix="/api/candidate", tags=["Candidate"])
+app.include_router(candidate_account.router, prefix="/api/candidate-account", tags=["Candidate Account"])
