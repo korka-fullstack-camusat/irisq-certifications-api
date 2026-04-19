@@ -2,12 +2,11 @@
 Espace candidat — compte utilisateur.
 
 Flux :
-1. Le candidat crée un compte (POST /register) avec email + mot de passe choisi.
+1. Le candidat crée un compte (POST /register) avec ses infos personnelles + email + mot de passe.
 2. Il se connecte (POST /login) avec email + mot de passe.
-3. Une fois connecté, il voit la liste des certifications disponibles.
-4. Il candidate (POST /apply) en fournissant les documents et le mode.
-5. Un numéro de dossier (public_id / matricule) lui est attribué automatiquement.
-   Ce matricule est distinct de l'identifiant de compte.
+3. Une fois connecté, il voit les certifications disponibles et peut postuler.
+4. C'est seulement après avoir postulé qu'un code de codification (public_id) est généré.
+   Ex: IC26D01L-0003. Sans candidature, aucun code n'est attribué.
 """
 import secrets
 from datetime import datetime, timedelta
@@ -82,12 +81,12 @@ def _serialize_account(doc: dict) -> dict:
         "email": doc.get("email", ""),
         "first_name": doc.get("first_name", ""),
         "last_name": doc.get("last_name", ""),
-        "phone": doc.get("phone"),
         "date_of_birth": doc.get("date_of_birth"),
-        "address": doc.get("address"),
-        "profile": doc.get("profile"),
-        "company": doc.get("company"),
+        "birth_place": doc.get("birth_place"),
         "nationality": doc.get("nationality"),
+        "phone": doc.get("phone"),
+        "years_experience": doc.get("years_experience"),
+        "address": doc.get("address"),
         "created_at": created.isoformat() if isinstance(created, datetime) else created,
     }
 
@@ -121,18 +120,13 @@ def _serialize_dossier(doc: dict) -> dict:
 
 @router.post("/register", status_code=201)
 async def register(payload: CandidateAccountCreate = Body(...)):
-    """Créer un nouveau compte candidat."""
     db = get_database()
     email = payload.email.strip().lower()
 
     existing = await db["candidate_accounts"].find_one({"email": email})
     if existing:
-        raise HTTPException(
-            status_code=409,
-            detail="Un compte existe déjà avec cet email.",
-        )
+        raise HTTPException(status_code=409, detail="Un compte existe déjà avec cet email.")
 
-    # Générer un identifiant de compte lisible et unique
     account_id = f"CA-{secrets.token_hex(4).upper()}"
     while await db["candidate_accounts"].find_one({"account_id": account_id}):
         account_id = f"CA-{secrets.token_hex(4).upper()}"
@@ -142,14 +136,14 @@ async def register(payload: CandidateAccountCreate = Body(...)):
         "account_id": account_id,
         "email": email,
         "password_hash": get_password_hash(payload.password),
-        "first_name": payload.first_name.strip(),
         "last_name": payload.last_name.strip(),
-        "phone": payload.phone,
+        "first_name": payload.first_name.strip(),
         "date_of_birth": payload.date_of_birth,
-        "address": payload.address,
-        "profile": payload.profile,
-        "company": payload.company,
+        "birth_place": payload.birth_place,
         "nationality": payload.nationality,
+        "phone": payload.phone,
+        "years_experience": payload.years_experience,
+        "address": payload.address,
         "created_at": now,
     }
     result = await db["candidate_accounts"].insert_one(doc)
@@ -163,19 +157,13 @@ async def register(payload: CandidateAccountCreate = Body(...)):
 
 @router.post("/login", response_model=CandidateAccountLoginOut)
 async def login(payload: CandidateAccountLoginIn = Body(...)):
-    """Connexion avec email + mot de passe."""
     db = get_database()
     email = payload.email.strip().lower()
-
     account = await db["candidate_accounts"].find_one({"email": email})
     if not account or not verify_password(payload.password, account.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
-
     token = create_account_token(str(account["_id"]))
-    return CandidateAccountLoginOut(
-        access_token=token,
-        account_id=account.get("account_id", ""),
-    )
+    return CandidateAccountLoginOut(access_token=token, account_id=account.get("account_id", ""))
 
 
 # ─────────────────────────────────────────
@@ -184,12 +172,10 @@ async def login(payload: CandidateAccountLoginIn = Body(...)):
 
 @router.get("/me")
 async def me(account=Depends(get_current_account)):
-    """Retourne le compte + la liste de tous les dossiers du candidat."""
     db = get_database()
     dossiers = await db["responses"].find(
         {"candidate_account_id": str(account["_id"])}
     ).sort("submitted_at", -1).to_list(200)
-
     result = _serialize_account(account)
     result["dossiers"] = [_serialize_dossier(d) for d in dossiers]
     return result
@@ -200,14 +186,11 @@ async def update_me(
     payload: CandidateAccountUpdate = Body(...),
     account=Depends(get_current_account),
 ):
-    """Mettre à jour les informations personnelles du compte."""
     db = get_database()
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not updates:
         return _serialize_account(account)
-    await db["candidate_accounts"].update_one(
-        {"_id": account["_id"]}, {"$set": updates}
-    )
+    await db["candidate_accounts"].update_one({"_id": account["_id"]}, {"$set": updates})
     updated = await db["candidate_accounts"].find_one({"_id": account["_id"]})
     return _serialize_account(updated)
 
@@ -218,7 +201,6 @@ async def update_me(
 
 @router.get("/dossiers")
 async def list_dossiers(account=Depends(get_current_account)):
-    """Lister tous les dossiers de candidature du compte."""
     db = get_database()
     dossiers = await db["responses"].find(
         {"candidate_account_id": str(account["_id"])}
@@ -238,8 +220,7 @@ async def apply(
     """
     Candidater à une certification.
     Les informations personnelles sont tirées du compte.
-    Le candidat fournit uniquement les documents et le mode d'examen.
-    Un matricule (public_id) unique est généré pour ce dossier.
+    Un code de codification (public_id) est généré uniquement à ce moment.
     """
     db = get_database()
     form_id = payload.form_id.strip()
@@ -251,7 +232,6 @@ async def apply(
     if not form:
         raise HTTPException(status_code=404, detail="Certification introuvable")
 
-    # Vérifier si le candidat a déjà postulé à cette certification
     existing = await db["responses"].find_one({
         "candidate_account_id": str(account["_id"]),
         "form_id": form_id,
@@ -263,17 +243,14 @@ async def apply(
             detail="Vous avez déjà une candidature active pour cette certification.",
         )
 
-    # Infos personnelles depuis le compte
     full_name = f"{account.get('first_name', '')} {account.get('last_name', '')}".strip()
     email = account.get("email", "")
-    profile = account.get("profile", "")
     certification_name = form.get("title", "Non spécifiée")
-
     now = datetime.utcnow()
+
     answers = dict(payload.answers or {})
     answers["Certification souhaitée"] = certification_name
 
-    # Gestion de la session
     session_id = payload.session_id
     session_seq = 0
     candidate_seq = 0
@@ -308,7 +285,7 @@ async def apply(
         "candidate_account_id": str(account["_id"]),
         "name": full_name,
         "email": email,
-        "profile": profile,
+        "profile": account.get("years_experience", ""),
         "answers": answers,
         "status": "pending",
         "public_id": public_id,
@@ -324,7 +301,6 @@ async def apply(
         {"_id": ObjectId(form_id)},
         {"$inc": {"responses_count": 1}, "$set": {"updated_at": now}},
     )
-
     created = await db["responses"].find_one({"_id": result.inserted_id})
 
     try:
@@ -351,9 +327,7 @@ async def resubmit_document(
     payload: ResubmitDocumentIn = Body(...),
     account=Depends(get_current_account),
 ):
-    """Renvoyer un document demandé par l'administration pour un dossier spécifique."""
     db = get_database()
-
     if not ObjectId.is_valid(payload.dossier_id):
         raise HTTPException(status_code=400, detail="ID de dossier invalide")
 
@@ -400,15 +374,11 @@ async def resubmit_document(
 
 @router.post("/forgot-password")
 async def forgot_password(payload: CandidateAccountForgotPasswordIn = Body(...)):
-    """Réinitialiser le mot de passe via email."""
     db = get_database()
     email = payload.email.strip().lower()
-
     _GENERIC_MSG = (
-        "Si un compte correspond à cet email, un nouveau mot de passe provisoire "
-        "vient d'être envoyé."
+        "Si un compte correspond à cet email, un nouveau mot de passe provisoire vient d'être envoyé."
     )
-
     account = await db["candidate_accounts"].find_one({"email": email})
     if not account:
         return {"message": _GENERIC_MSG}
@@ -422,13 +392,10 @@ async def forgot_password(payload: CandidateAccountForgotPasswordIn = Body(...))
             "password_reset_at": datetime.utcnow(),
         }},
     )
-
     try:
         from email_service import notify_candidate_password_reset
         full_name = f"{account.get('first_name', '')} {account.get('last_name', '')}".strip()
-        notify_candidate_password_reset(
-            email, full_name, account.get("account_id", ""), new_password
-        )
+        notify_candidate_password_reset(email, full_name, account.get("account_id", ""), new_password)
     except Exception as e:
         print(f"[EMAIL] Password reset failed for {email}: {e}")
 
@@ -445,11 +412,7 @@ async def change_password(
     account=Depends(get_current_account),
 ):
     if payload.current_password == payload.new_password:
-        raise HTTPException(
-            status_code=400,
-            detail="Le nouveau mot de passe doit être différent de l'ancien.",
-        )
-
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit être différent de l'ancien.")
     if not verify_password(payload.current_password, account.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Mot de passe actuel incorrect")
 
@@ -462,12 +425,8 @@ async def change_password(
             "password_changed_at": datetime.utcnow(),
         }},
     )
-
     token = create_account_token(str(account["_id"]))
-    return CandidateAccountLoginOut(
-        access_token=token,
-        account_id=account.get("account_id", ""),
-    )
+    return CandidateAccountLoginOut(access_token=token, account_id=account.get("account_id", ""))
 
 
 # ─────────────────────────────────────────
@@ -476,7 +435,6 @@ async def change_password(
 
 @router.get("/certifications")
 async def list_certifications():
-    """Liste des certifications disponibles — accessible sans authentification."""
     db = get_database()
     forms = await db["forms"].find({}).sort("created_at", -1).to_list(200)
     result = []

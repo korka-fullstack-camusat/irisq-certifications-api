@@ -4,27 +4,29 @@ from datetime import datetime
 
 
 class CandidateAccountCreate(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
-    first_name: str
+    # Identité & contact (image Étape 1)
     last_name: str
-    phone: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    address: Optional[str] = None
-    profile: Optional[str] = None  # "Salarié", "Indépendant", "Demandeur d'emploi", etc.
-    company: Optional[str] = None
+    first_name: str
+    date_of_birth: str           # obligatoire
+    birth_place: Optional[str] = None
     nationality: Optional[str] = None
+    phone: str                   # obligatoire
+    email: EmailStr              # obligatoire
+    years_experience: str        # obligatoire (ex: "3")
+    address: Optional[str] = None
+    # Accès
+    password: str = Field(min_length=6, max_length=128)
 
 
 class CandidateAccountUpdate(BaseModel):
-    first_name: Optional[str] = None
     last_name: Optional[str] = None
-    phone: Optional[str] = None
+    first_name: Optional[str] = None
     date_of_birth: Optional[str] = None
-    address: Optional[str] = None
-    profile: Optional[str] = None
-    company: Optional[str] = None
+    birth_place: Optional[str] = None
     nationality: Optional[str] = None
+    phone: Optional[str] = None
+    years_experience: Optional[str] = None
+    address: Optional[str] = None
 
 
 class CandidateAccountLoginIn(BaseModel):
@@ -50,6 +52,6 @@ class CandidateAccountChangePasswordIn(BaseModel):
 class CandidateApplyIn(BaseModel):
     form_id: str
     session_id: Optional[str] = None
-    exam_mode: str  # "online" | "onsite"
+    exam_mode: str               # "online" | "onsite"
     exam_type: Optional[str] = None  # "direct" | "after_formation"
-    answers: Optional[dict] = None  # documents uploadés + champs additionnels
+    answers: Optional[dict] = None   # documents uploadés
