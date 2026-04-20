@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from bson import ObjectId
@@ -116,6 +116,19 @@ def _serialize_dossier(doc: dict) -> dict:
 
 
 # ─────────────────────────────────────────
+# Vérification d'email
+# ─────────────────────────────────────────
+
+@router.get("/check-email")
+async def check_email(email: str = Query(..., min_length=3)):
+    """Vérifier si un email est déjà utilisé pour un compte candidat."""
+    db = get_database()
+    normalized = email.strip().lower()
+    existing = await db["candidate_accounts"].find_one({"email": normalized})
+    return {"exists": existing is not None}
+
+
+# ─────────────────────────────────────────
 # Inscription
 # ─────────────────────────────────────────
 
@@ -129,7 +142,7 @@ async def register(payload: CandidateAccountCreate = Body(...)):
     if existing:
         raise HTTPException(
             status_code=409,
-            detail="Un compte existe déjà avec cet email.",
+            detail="Le compte existe déjà, veuillez vous connecter.",
         )
 
     # Générer un identifiant de compte lisible et unique
