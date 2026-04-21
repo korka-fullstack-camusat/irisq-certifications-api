@@ -33,6 +33,12 @@ async def seed_users():
             "password": "exam123",
             "role": "CORRECTEUR",
             "full_name": "Correcteur Anonyme",
+        },
+        {
+            "email": "aicha.diamanka@irisq.sn",
+            "password": "aicha.irisq@2026",
+            "role": "RH",
+            "full_name": "Aicha Diamanka",
         }
     ]
 
