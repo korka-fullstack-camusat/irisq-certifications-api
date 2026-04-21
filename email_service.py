@@ -95,76 +95,66 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
 
 
 def notify_candidate_submission_received(to_email: str, candidate_name: str, public_id: str, certification: str, default_password: str = ""):
-    """Notify the candidate that their submission was successfully received.
-
-    Includes the default password so the candidate can log into their portal
-    (public_id + default_password). They will be asked to change it on first login.
-    """
-    subject = f"Confirmation de réception de votre demande — {certification}"
+    """Notify the candidate that their submission was successfully received."""
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    subject = f"Votre candidature a été envoyée — {certification}"
     html_body = f"""
-    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
-        <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-            <div style="text-align: center; margin-bottom: 24px;">
-                <div style="display: inline-block; background: #0f172a; color: white; font-weight: bold; padding: 8px 16px; border-radius: 8px; font-size: 14px; letter-spacing: 0.5px;">
-                    IRISQ CERTIFICATION
-                </div>
-            </div>
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 
-            <h2 style="color: #0f172a; font-size: 20px; margin-bottom: 8px; text-align: center;">
-                Candidature confirmée
-            </h2>
-            <p style="color: #64748b; text-align: center; font-size: 14px; margin-bottom: 24px;">
-                Bonjour {candidate_name}, nous avons bien reçu votre demande de certification.
-            </p>
-
-            <div style="background: #f1f5f9; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
-                <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-weight: 600;">ID Public</td>
-                        <td style="padding: 8px 0; color: #0f172a; font-weight: 700; font-family: monospace; text-align: right;">{public_id}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Certification</td>
-                        <td style="padding: 8px 0; color: #0f172a; text-align: right; border-top: 1px solid #e2e8f0;">{certification}</td>
-                    </tr>
-                </table>
-            </div>
-
-            <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
-                Votre dossier est en cours d'analyse par notre équipe RH. Vous serez informé(e) très prochainement par email de l'évolution de votre candidature.
-            </p>
-
-            <div style="background: #fff8f1; border-left: 4px solid #f97316; padding: 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
-                <p style="color: #9a3412; font-size: 14px; margin: 0; font-weight: 500;">
-                    <strong>⚠️ IMPORTANT :</strong> Veuillez conserver précieusement votre <strong>ID Public ({public_id})</strong>. Il vous sera indispensable pour la suite de la procédure.
-                </p>
-            </div>
-
-            <div style="background: #eef2ff; border-left: 4px solid #1a237e; padding: 16px; margin-bottom: 8px; border-radius: 0 8px 8px 0;">
-                <p style="color: #1a237e; font-size: 14px; margin: 0 0 12px 0; font-weight: 600;">
-                    Accédez à votre espace candidat
-                </p>
-                <p style="color: #334155; font-size: 13px; margin: 0 0 12px 0; line-height: 1.5;">
-                    Suivez l'état de votre candidature et répondez aux demandes de l'administration depuis votre espace personnel.
-                </p>
-                <table style="width: 100%; font-size: 13px; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
-                    <tr>
-                        <td style="padding: 10px 12px; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Identifiant</td>
-                        <td style="padding: 10px 12px; color: #0f172a; font-weight: 700; font-family: monospace; text-align: right; border-bottom: 1px solid #e2e8f0;">{public_id}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px 12px; color: #64748b; font-weight: 600;">Mot de passe provisoire</td>
-                        <td style="padding: 10px 12px; color: #0f172a; font-weight: 700; font-family: monospace; text-align: right;">{default_password}</td>
-                    </tr>
-                </table>
-                <p style="color: #64748b; font-size: 12px; margin: 10px 0 0 0; line-height: 1.5;">
-                    Lors de votre première connexion, vous serez invité(e) à définir un nouveau mot de passe personnel.
-                </p>
+        <!-- Logo -->
+        <div style="text-align: center; margin-bottom: 28px;">
+            <img src="{frontend_url}/logo.png" alt="IRISQ" width="72" height="72"
+                 style="border-radius: 50%; border: 3px solid #2e7d32; padding: 4px; background: white;" />
+            <div style="color: #1a237e; font-weight: 800; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase; margin-top: 8px;">
+                IRISQ-CERTIFICATIONS
             </div>
         </div>
 
-        <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 24px;">
-            Cet email a été envoyé automatiquement par IRISQ Certification.
+        <!-- Carte principale -->
+        <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+
+            <!-- Titre -->
+            <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 12px 0;">
+                Candidature envoyée
+            </h2>
+
+            <!-- Message -->
+            <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 28px 0;">
+                Bonjour <strong>{candidate_name}</strong>,<br>
+                votre candidature pour <strong>{certification}</strong> a bien été reçue.<br>
+                Pour suivre l'évolution de votre dossier, connectez-vous à votre espace candidat.
+            </p>
+
+            <!-- Séparateur -->
+            <div style="height: 1px; background: #e2e8f0; margin-bottom: 24px;"></div>
+
+            <!-- Identifiants de connexion -->
+            <p style="color: #1a237e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 12px 0;">
+                Vos informations de connexion
+            </p>
+            <table style="width: 100%; font-size: 14px; border-collapse: collapse; background: #f8fafc; border-radius: 10px; overflow: hidden;">
+                <tr>
+                    <td style="padding: 12px 16px; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Identifiant</td>
+                    <td style="padding: 12px 16px; color: #1a237e; font-weight: 700; font-family: monospace; text-align: right; border-bottom: 1px solid #e2e8f0;">{public_id}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px 16px; color: #64748b; font-weight: 600;">Mot de passe</td>
+                    <td style="padding: 12px 16px; color: #1a237e; font-weight: 700; font-family: monospace; text-align: right;">{default_password}</td>
+                </tr>
+            </table>
+
+            <!-- Bouton -->
+            <div style="text-align: center; margin-top: 28px;">
+                <a href="{frontend_url}/candidat/login"
+                   style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
+                    Accéder à mon espace
+                </a>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
         </p>
     </div>
     """
