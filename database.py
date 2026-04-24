@@ -8,7 +8,8 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "irisq_form_builder")
 
-MONGO_TIMEOUT_MS = 5000
+MONGO_TIMEOUT_MS = 15000
+MONGO_POOL_SIZE = int(os.getenv("MONGO_POOL_SIZE", "200"))
 
 
 class Database:
@@ -29,9 +30,14 @@ def _build_client() -> AsyncIOMotorClient:
     # - retryWrites/appName are forwarded via MONGO_URI
     return AsyncIOMotorClient(
         MONGO_URI,
+        maxPoolSize=MONGO_POOL_SIZE,
+        minPoolSize=10,
+        maxIdleTimeMS=45000,
+        waitQueueTimeoutMS=5000,
         serverSelectionTimeoutMS=MONGO_TIMEOUT_MS,
-        connectTimeoutMS=MONGO_TIMEOUT_MS,
-        socketTimeoutMS=MONGO_TIMEOUT_MS,
+        connectTimeoutMS=10000,
+        socketTimeoutMS=45000,
+        retryWrites=True,
         tls=True,
         tlsCAFile=certifi.where(),
         tlsDisableOCSPEndpointCheck=True,

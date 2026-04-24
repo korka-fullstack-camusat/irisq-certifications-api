@@ -12,6 +12,7 @@ from database import get_database, get_fs
 from models.session import SessionCreate, SessionUpdate
 from models.user import UserOut
 from dependencies.auth import require_role
+from utils.audit import log_action
 
 router = APIRouter()
 
@@ -176,6 +177,16 @@ async def create_session(
     data["candidate_counter"] = 0
     result = await db["sessions"].insert_one(data)
     created = await db["sessions"].find_one({"_id": result.inserted_id})
+    await log_action(
+        action="session_created",
+        resource_type="session",
+        resource_id=str(result.inserted_id),
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=payload.name,
+        details={"name": payload.name, "status": data.get("status")},
+    )
     return serialize(created)
 
 
@@ -207,6 +218,16 @@ async def update_session(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Session not found")
     updated = await db["sessions"].find_one({"_id": ObjectId(session_id)})
+    await log_action(
+        action="session_updated",
+        resource_type="session",
+        resource_id=session_id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=updated.get("name", session_id),
+        details={k: v for k, v in data.items() if k != "updated_at"},
+    )
     return serialize(updated)
 
 
@@ -218,10 +239,57 @@ async def delete_session(
     db = get_database()
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID")
+    session_doc = await db["sessions"].find_one({"_id": ObjectId(session_id)})
+    if not session_doc:
+        raise HTTPException(status_code=404, detail="Session not found")
     result = await db["sessions"].delete_one({"_id": ObjectId(session_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Session not found")
+    await log_action(
+        action="session_deleted",
+        resource_type="session",
+        resource_id=session_id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=session_doc.get("name", session_id),
+    )
     return {"status": "deleted"}
+
+
+@router.get("/{session_id}/eligibility", response_description="Check if an email can apply to this session")
+async def check_session_eligibility(
+    session_id: str,
+    email: str = Query(..., description="Candidate email to check"),
+):
+    db = get_database()
+    if not ObjectId.is_valid(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID")
+
+    session = await db["sessions"].find_one({"_id": ObjectId(session_id)})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    existing = await db["responses"].find_one({
+        "session_id": session_id,
+        "email": {"$regex": f"^{email}$", "$options": "i"},
+    })
+
+    if not existing:
+        return {"eligible": True}
+
+    if existing.get("status") == "rejected":
+        return {
+            "eligible": False,
+            "code": "APPLICATION_REJECTED",
+            "message": "Votre candidature a été rejetée pour cette session. Veuillez attendre l'ouverture d'une prochaine session.",
+        }
+
+    return {
+        "eligible": False,
+        "code": "ALREADY_APPLIED",
+        "message": "Vous avez déjà postulé à cette session. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+    }
 
 
 @router.get("/{session_id}/responses", response_description="List candidatures of a given session")

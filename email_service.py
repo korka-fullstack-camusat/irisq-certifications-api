@@ -414,6 +414,58 @@ def notify_candidate_document_issue(to_email: str, candidate_name: str, public_i
     send_email(to_email, subject, html_body)
 
 
+def notify_admin_password_reset(to_email: str, admin_name: str, new_password: str):
+    """Send a temporary password to an admin user after a forgot-password request."""
+    subject = "Réinitialisation de votre mot de passe administrateur — IRISQ"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_body = f"""
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
+        <div style="text-align: center; margin-bottom: 28px;">
+            <div style="color: #1a237e; font-weight: 800; font-size: 13px; letter-spacing: 0.25em; text-transform: uppercase;">
+                IRISQ-CERTIFICATIONS
+            </div>
+        </div>
+        <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+            <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 8px 0;">
+                Réinitialisation du mot de passe
+            </h2>
+            <p style="color: #475569; font-size: 14px; text-align: center; margin: 0 0 28px 0;">
+                Bonjour <strong>{admin_name}</strong>, voici votre mot de passe provisoire pour accéder au tableau de bord administrateur.
+            </p>
+            <div style="background: #eef2ff; border-radius: 10px; padding: 20px; margin-bottom: 24px;">
+                <table style="width: 100%; font-size: 14px; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden;">
+                    <tr>
+                        <td style="padding: 12px 16px; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Email</td>
+                        <td style="padding: 12px 16px; color: #1a237e; font-weight: 700; font-family: monospace; text-align: right; border-bottom: 1px solid #e2e8f0;">{to_email}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px 16px; color: #64748b; font-weight: 600;">Mot de passe provisoire</td>
+                        <td style="padding: 12px 16px; color: #1a237e; font-weight: 700; font-family: monospace; font-size: 16px; text-align: right;">{new_password}</td>
+                    </tr>
+                </table>
+                <p style="color: #64748b; font-size: 12px; margin: 12px 0 0 0; line-height: 1.5;">
+                    Connectez-vous avec ce mot de passe et changez-le immédiatement après votre prochaine connexion.
+                </p>
+            </div>
+            <div style="text-align: center; margin-bottom: 20px;">
+                <a href="{frontend_url}/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
+                    Accéder au tableau de bord
+                </a>
+            </div>
+            <div style="background: #fff8f1; border-left: 4px solid #f97316; padding: 14px; border-radius: 0 8px 8px 0;">
+                <p style="color: #9a3412; font-size: 13px; margin: 0; line-height: 1.5;">
+                    Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement l'administrateur système.
+                </p>
+            </div>
+        </div>
+        <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
+        </p>
+    </div>
+    """
+    send_email(to_email, subject, html_body)
+
+
 def notify_candidate_password_reset(to_email: str, candidate_name: str, public_id: str, new_password: str):
     """Send a freshly generated temporary password after a forgot-password request.
 

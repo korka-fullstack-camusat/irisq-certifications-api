@@ -14,7 +14,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
@@ -131,7 +131,10 @@ _GENERIC_FORGOT_MESSAGE = (
 
 
 @router.post("/forgot-password", response_model=CandidateForgotPasswordOut)
-async def candidate_forgot_password(payload: CandidateForgotPasswordIn = Body(...)):
+async def candidate_forgot_password(
+    payload: CandidateForgotPasswordIn = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
     """Generate a fresh temporary password and email it to the candidate.
 
     Always returns the same generic message (even if no record matches)
@@ -153,7 +156,6 @@ async def candidate_forgot_password(payload: CandidateForgotPasswordIn = Body(..
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
     if response.get("credentials_blocked"):
-        # Match the login endpoint: explicitly refuse blocked candidates.
         raise HTTPException(
             status_code=403,
             detail="Votre candidature a été rejetée. Vos identifiants ont été désactivés.",
@@ -169,15 +171,14 @@ async def candidate_forgot_password(payload: CandidateForgotPasswordIn = Body(..
         }},
     )
 
-    try:
-        notify_candidate_password_reset(
-            stored_email,
-            response.get("name") or "Candidat",
-            public_id,
-            new_password,
-        )
-    except Exception as e:
-        print(f"[EMAIL] Password reset email failed for {stored_email}: {e}")
+    # Send the email in the background — response returns immediately
+    background_tasks.add_task(
+        notify_candidate_password_reset,
+        stored_email,
+        response.get("name") or "Candidat",
+        public_id,
+        new_password,
+    )
 
     return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 

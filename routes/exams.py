@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Body, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Optional
@@ -115,11 +115,15 @@ async def delete_exam(id: str, current_user: UserOut = Depends(require_role(["RH
     raise HTTPException(status_code=404, detail=f"Exam {id} not found")
 
 @router.post("/exams/{id}/publish", response_description="Publish an exam and notify approved candidates")
-async def publish_exam(id: str, current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"]))):
+async def publish_exam(
+    id: str,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
     db = get_database()
     if not ObjectId.is_valid(id):
         raise HTTPException(status_code=400, detail="Invalid exam ID format")
-        
+
     exam = await db["exams"].find_one({"_id": ObjectId(id)})
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {id} not found")
@@ -129,8 +133,6 @@ async def publish_exam(id: str, current_user: UserOut = Depends(require_role(["R
         raise HTTPException(status_code=400, detail="Exam has no certification type")
 
     # Find all approved responses for this certification
-    # We look for responses where the answer to 'Certification souhaitée' matches the exam's certification
-    # and the status is 'approved'
     approved_responses = await db["responses"].find({
         "status": "approved",
         "answers.Certification souhaitée": certification_name
@@ -142,8 +144,7 @@ async def publish_exam(id: str, current_user: UserOut = Depends(require_role(["R
     for response in approved_responses:
         candidate_email = response.get("email")
         public_id = response.get("public_id", "N/A")
-        
-        # Name is sometimes stored as dict or string
+
         first_name = response.get("answers", {}).get("Prénom", "")
         last_name = response.get("answers", {}).get("Nom", "Candidat")
         full_name = f"{first_name} {last_name}".strip()
@@ -156,21 +157,21 @@ async def publish_exam(id: str, current_user: UserOut = Depends(require_role(["R
                 {"$set": {"exam_token": exam_token}}
             )
 
-        # The token is a secure UUID string, linking the exam session safely
         exam_link = f"{frontend_url}/examen/{exam_token}"
 
         if candidate_email:
-            # Send Email
-            notify_candidate_exam_link(
+            # Queue each email as a background task — the loop returns immediately
+            background_tasks.add_task(
+                notify_candidate_exam_link,
                 to_email=candidate_email,
                 public_id=public_id,
                 candidate_name=full_name,
                 certification=certification_name,
-                exam_link=exam_link
+                exam_link=exam_link,
             )
             notified_count += 1
 
     return {
-        "message": "Exam published successfully", 
+        "message": "Exam published successfully",
         "notified_candidates_count": notified_count
     }

@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Body, Depends, BackgroundTasks, Query
 from typing import List, Optional
+import re
 from database import get_database
 from models.response import (
     ResponseCreate, StatusUpdate, EvaluatorDocUpdate, ExamSubmissionUpdate,
@@ -21,6 +22,7 @@ from email_service import (
     notify_candidate_document_issue,
 )
 from services.pdf_generator import generate_and_upload_candidate_pdf
+from utils.audit import log_action
 
 router = APIRouter()
 
@@ -66,8 +68,52 @@ def serialize_doc(doc, user_role: Optional[str] = None):
 
     return doc
 
+@router.get("/responses/check-email", response_description="Check if an email is eligible to apply across all active sessions")
+async def check_email_eligibility(email: str = Query(..., description="Candidate email to verify")):
+    """
+    Public endpoint — called by the candidature form as soon as the user
+    finishes typing their email address.  Returns whether the email already
+    has an open or rejected candidature in any currently-active session.
+    """
+    db = get_database()
+    trimmed = email.strip().lower()
+    if not trimmed:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    # Collect all active session IDs (fast: indexed on status)
+    active_sessions = await db["sessions"].find(
+        {"status": "active"}, {"_id": 1}
+    ).to_list(200)
+    active_ids = [str(s["_id"]) for s in active_sessions]
+
+    if not active_ids:
+        return {"eligible": True}
+
+    # Case-insensitive email match against any active session
+    existing = await db["responses"].find_one({
+        "session_id": {"$in": active_ids},
+        "email": {"$regex": f"^{re.escape(trimmed)}$", "$options": "i"},
+    })
+
+    if not existing:
+        return {"eligible": True}
+
+    if existing.get("status") == "rejected":
+        return {
+            "eligible": False,
+            "code": "APPLICATION_REJECTED",
+            "message": "Votre candidature a été rejetée pour la session en cours. Veuillez attendre l'ouverture d'une nouvelle session.",
+        }
+
+    return {
+        "eligible": False,
+        "code": "ALREADY_APPLIED",
+        "message": "Vous avez déjà soumis une candidature pour la session en cours. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+    }
+
+
 @router.post("/forms/{form_id}/responses", response_description="Submit a response to a form", status_code=201)
-async def create_response(form_id: str, response: ResponseCreate = Body(...)):
+async def create_response(form_id: str, response: ResponseCreate = Body(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     db = get_database()
 
     # Check if form exists
@@ -89,6 +135,28 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...)):
     session_id = response_dict.get("session_id")
     session_seq = 0
     candidate_seq = 0
+    if session_id and response_dict.get("email"):
+        # Guard: check if this email already has a candidature on this session
+        existing = await db["responses"].find_one({
+            "session_id": session_id,
+            "email": {"$regex": f"^{response_dict['email']}$", "$options": "i"},
+        })
+        if existing:
+            if existing.get("status") == "rejected":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "APPLICATION_REJECTED",
+                        "message": "Votre candidature a été rejetée pour cette session. Veuillez attendre l'ouverture d'une prochaine session.",
+                    },
+                )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ALREADY_APPLIED",
+                    "message": "Vous avez déjà postulé à cette session. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+                },
+            )
     if session_id:
         if not ObjectId.is_valid(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID format")
@@ -136,25 +204,18 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...)):
 
     created_response = await db["responses"].find_one({"_id": new_response.inserted_id})
 
-    # Send email notifications
-    try:
-        candidate_id = response_dict.get("candidate_id", "N/A")
-        candidate_name = response_dict.get("name", "Inconnu")
-        candidate_email = response_dict.get("email")
-        public_id = response_dict.get("public_id", "N/A")
-        certification = response_dict.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
+    candidate_id = response_dict.get("candidate_id", "N/A")
+    candidate_name = response_dict.get("name", "Inconnu")
+    candidate_email = response_dict.get("email")
+    public_id = response_dict.get("public_id", "N/A")
+    certification = response_dict.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
 
-        # Notify HR
-        notify_rh_new_submission(candidate_id, candidate_name, certification)
-
-        # Notify Candidate
-        if candidate_email:
-            notify_candidate_submission_received(
-                candidate_email, candidate_name, public_id, certification, default_password
-            )
-
-    except Exception as e:
-        print(f"[EMAIL] Notification failed but submission saved: {e}")
+    background_tasks.add_task(notify_rh_new_submission, candidate_id, candidate_name, certification)
+    if candidate_email:
+        background_tasks.add_task(
+            notify_candidate_submission_received,
+            candidate_email, candidate_name, public_id, certification, default_password,
+        )
 
     return serialize_doc(created_response)
 
@@ -189,7 +250,7 @@ async def get_response(id: str, current_user: Optional[UserOut] = Depends(get_cu
     return serialize_doc(response, user_role=user_role)
 
 @router.patch("/responses/{id}/status", response_description="Update response status")
-async def update_response_status(id: str, status_update: StatusUpdate = Body(...), current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"]))):
+async def update_response_status(id: str, status_update: StatusUpdate = Body(...), current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])), background_tasks: BackgroundTasks = BackgroundTasks()):
     db = get_database()
     if not ObjectId.is_valid(id):
         raise HTTPException(status_code=400, detail="Invalid response ID format")
@@ -214,19 +275,27 @@ async def update_response_status(id: str, status_update: StatusUpdate = Body(...
 
         # Notify Candidate ONLY if status was actually modified
         if updated.modified_count == 1:
-            try:
-                to_email = updated_response.get("email")
-                public_id = updated_response.get("public_id", "N/A")
-                status = updated_response.get("status")
-                certification = updated_response.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
+            to_email = updated_response.get("email")
+            pub_id = updated_response.get("public_id", "N/A")
+            new_status = updated_response.get("status")
+            certification = updated_response.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
+            if to_email:
+                background_tasks.add_task(
+                    notify_candidate_status_update,
+                    to_email, pub_id, new_status, certification,
+                    status_update.reason if status_update.status == "rejected" else None,
+                )
 
-                if to_email:
-                    notify_candidate_status_update(
-                        to_email, public_id, status, certification,
-                        reason=status_update.reason if status_update.status == "rejected" else None,
-                    )
-            except Exception as e:
-                print(f"[EMAIL] Candidate notification failed: {e}")
+            await log_action(
+                action="response_status_updated",
+                resource_type="response",
+                resource_id=id,
+                user_email=current_user.email,
+                user_role=current_user.role,
+                user_name=current_user.full_name,
+                resource_label=updated_response.get("public_id", id),
+                details={"new_status": status_update.status, "reason": status_update.reason},
+            )
 
         return serialize_doc(updated_response, user_role=current_user.role)
 
@@ -261,6 +330,17 @@ async def delete_response(id: str, current_user: UserOut = Depends(require_role(
             {"$inc": {"responses_count": -1}, "$set": {"updated_at": datetime.utcnow()}},
         )
 
+    await log_action(
+        action="response_deleted",
+        resource_type="response",
+        resource_id=id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=response_doc.get("public_id", id),
+        details={"name": response_doc.get("name"), "certification": response_doc.get("answers", {}).get("Certification souhaitée")},
+    )
+
     return {"status": "deleted", "id": id}
 
 
@@ -277,6 +357,15 @@ async def update_evaluator_document(id: str, doc_update: EvaluatorDocUpdate = Bo
 
     if updated.matched_count == 1:
         updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+        await log_action(
+            action="evaluator_document_updated",
+            resource_type="response",
+            resource_id=id,
+            user_email=current_user.email,
+            user_role=current_user.role,
+            user_name=current_user.full_name,
+            resource_label=updated_response.get("public_id", id),
+        )
         return serialize_doc(updated_response, user_role=current_user.role)
 
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
@@ -306,6 +395,16 @@ async def update_exam_grade(id: str, grade_update: ExamSubmissionUpdate = Body(.
 
     if updated.matched_count == 1:
         updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+        await log_action(
+            action="exam_graded",
+            resource_type="response",
+            resource_id=id,
+            user_email=current_user.email,
+            user_role=current_user.role,
+            user_name=current_user.full_name,
+            resource_label=updated_response.get("public_id", id),
+            details={"exam_grade": grade_update.exam_grade, "exam_status": grade_update.exam_status},
+        )
         return serialize_doc(updated_response, user_role=current_user.role)
 
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
@@ -369,7 +468,7 @@ async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
 
 @router.patch("/responses/{id}/assign", response_description="Assign an exam to an examiner")
-async def assign_examiner(id: str, assignment: AssignExaminerUpdate = Body(...), current_user: UserOut = Depends(require_role(["EVALUATEUR", "RH"]))):
+async def assign_examiner(id: str, assignment: AssignExaminerUpdate = Body(...), current_user: UserOut = Depends(require_role(["EVALUATEUR", "RH"])), background_tasks: BackgroundTasks = BackgroundTasks()):
     db = get_database()
     if not ObjectId.is_valid(id):
         raise HTTPException(status_code=400, detail="Invalid response ID format")
@@ -395,13 +494,25 @@ async def assign_examiner(id: str, assignment: AssignExaminerUpdate = Body(...),
             if form:
                 certification_name = form.get("title", certification_name)
 
-        # Send the email notification
+        # Send the email notification in the background so the response returns immediately
         if assignment.examiner_email:
-            notify_examiner_assignment(
+            background_tasks.add_task(
+                notify_examiner_assignment,
                 to_email=assignment.examiner_email,
                 candidate_id=candidate_id,
-                certification=certification_name
+                certification=certification_name,
             )
+
+        await log_action(
+            action="examiner_assigned",
+            resource_type="response",
+            resource_id=id,
+            user_email=current_user.email,
+            user_role=current_user.role,
+            user_name=current_user.full_name,
+            resource_label=updated_response.get("public_id", id),
+            details={"examiner_email": assignment.examiner_email, "certification": certification_name},
+        )
 
         return serialize_doc(updated_response, user_role=current_user.role)
 
@@ -424,6 +535,16 @@ async def evaluate_final_response(id: str, evaluation: FinalEvaluationUpdate = B
 
     if updated.matched_count == 1:
         updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+        await log_action(
+            action="final_evaluation_submitted",
+            resource_type="response",
+            resource_id=id,
+            user_email=current_user.email,
+            user_role=current_user.role,
+            user_name=current_user.full_name,
+            resource_label=updated_response.get("public_id", id),
+            details={"final_grade": evaluation.final_grade, "final_appreciation": evaluation.final_appreciation},
+        )
         return serialize_doc(updated_response, user_role=current_user.role)
 
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
@@ -452,6 +573,15 @@ async def update_documents_validation(
         raise HTTPException(status_code=404, detail=f"Response {id} not found")
 
     updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+    await log_action(
+        action="documents_validation_updated",
+        resource_type="response",
+        resource_id=id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=updated_response.get("public_id", id),
+    )
     return serialize_doc(updated_response, user_role=current_user.role)
 
 
@@ -460,6 +590,7 @@ async def request_document_resubmit(
     id: str,
     payload: DocumentResubmitRequest = Body(...),
     current_user: UserOut = Depends(require_role(["RH"])),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     db = get_database()
     if not ObjectId.is_valid(id):
@@ -473,19 +604,6 @@ async def request_document_resubmit(
     if not to_email:
         raise HTTPException(status_code=400, detail="Candidate has no email on file")
 
-    try:
-        notify_candidate_document_issue(
-            to_email=to_email,
-            candidate_name=response_doc.get("name", "Candidat"),
-            public_id=response_doc.get("public_id", "N/A"),
-            certification=response_doc.get("answers", {}).get("Certification souhaitée", "Non spécifiée"),
-            document_name=payload.document_name,
-            message=payload.message or "",
-        )
-    except Exception as e:
-        print(f"[EMAIL] Document issue notification failed: {e}")
-        raise HTTPException(status_code=500, detail="Email notification failed")
-
     # Track that we asked the candidate to resubmit this specific document
     current_validation = response_doc.get("documents_validation", {}) or {}
     current_validation[payload.document_name] = {
@@ -498,6 +616,28 @@ async def request_document_resubmit(
     await db["responses"].update_one(
         {"_id": ObjectId(id)},
         {"$set": {"documents_validation": current_validation}}
+    )
+
+    # Fire the email in the background — response returns immediately
+    background_tasks.add_task(
+        notify_candidate_document_issue,
+        to_email=to_email,
+        candidate_name=response_doc.get("name", "Candidat"),
+        public_id=response_doc.get("public_id", "N/A"),
+        certification=response_doc.get("answers", {}).get("Certification souhaitée", "Non spécifiée"),
+        document_name=payload.document_name,
+        message=payload.message or "",
+    )
+
+    await log_action(
+        action="document_resubmit_requested",
+        resource_type="response",
+        resource_id=id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=response_doc.get("public_id", id),
+        details={"document_name": payload.document_name, "message": payload.message},
     )
 
     return {"status": "email_sent", "document_name": payload.document_name}

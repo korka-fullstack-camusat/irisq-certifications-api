@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from database import get_database
@@ -6,6 +6,9 @@ from models.user import UserCreate, UserInDB, Token, UserOut
 from utils.security import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from dependencies.auth import get_current_user
 from bson import ObjectId
+from pydantic import BaseModel, EmailStr
+import secrets
+from email_service import notify_admin_password_reset
 
 router = APIRouter()
 
@@ -61,3 +64,35 @@ async def register(user: UserCreate):
 @router.get("/me", response_model=UserOut)
 async def read_users_me(current_user: UserOut = Depends(get_current_user)):
     return current_user
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+):
+    db = get_database()
+    email = payload.email.lower().strip()
+    user = await db["users"].find_one({"email": email})
+
+    # Always return success to avoid email enumeration
+    if not user:
+        return {"message": "Si cet email est enregistré, un mot de passe provisoire vient d'être envoyé."}
+
+    new_password = secrets.token_urlsafe(10)[:12]
+    hashed = get_password_hash(new_password)
+    await db["users"].update_one(
+        {"_id": user["_id"]},
+        {"$set": {"hashed_password": hashed}}
+    )
+
+    background_tasks.add_task(
+        notify_admin_password_reset,
+        email, user.get("full_name") or email, new_password,
+    )
+
+    return {"message": "Si cet email est enregistré, un mot de passe provisoire vient d'être envoyé."}

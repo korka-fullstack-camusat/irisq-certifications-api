@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import os
 
 from database import connect_to_mongo, close_mongo_connection
-from routes import forms, responses, upload, exams, auth, sessions, candidate_account
+from routes import forms, responses, upload, exams, auth, sessions, candidate_account, audit_logs
+from utils.indexes import create_indexes
 
 from rich.console import Console
 from rich.panel import Panel
@@ -44,11 +46,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.on_event("startup")
 async def startup_event():
     await connect_to_mongo()
+    await create_indexes()
     console.print(
         Panel.fit(
             Text("IRISQ API is starting \U0001f680", justify="center", style="bold green"),
@@ -92,3 +96,4 @@ app.include_router(responses.router, prefix="/api", tags=["Responses"])
 app.include_router(upload.router, prefix="/api", tags=["Uploads"])
 app.include_router(exams.router, prefix="/api", tags=["Exams"])
 app.include_router(candidate_account.router, prefix="/api/candidate", tags=["Candidate"])
+app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["Audit Logs"])

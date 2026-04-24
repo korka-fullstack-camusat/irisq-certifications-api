@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from bson import ObjectId
@@ -234,6 +234,7 @@ async def list_dossiers(account=Depends(get_current_account)):
 async def apply(
     payload: CandidateApplyIn = Body(...),
     account=Depends(get_current_account),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Candidater à une certification.
@@ -327,11 +328,9 @@ async def apply(
 
     created = await db["responses"].find_one({"_id": result.inserted_id})
 
-    try:
-        notify_rh_new_submission(candidate_id, full_name, certification_name)
-        notify_candidate_submission_received(email, full_name, public_id, certification_name, "")
-    except Exception as e:
-        print(f"[EMAIL] Notification failed: {e}")
+    # Fire both emails in the background so the HTTP response returns immediately
+    background_tasks.add_task(notify_rh_new_submission, candidate_id, full_name, certification_name)
+    background_tasks.add_task(notify_candidate_submission_received, email, full_name, public_id, certification_name, "")
 
     return _serialize_dossier(created)
 
@@ -399,7 +398,10 @@ async def resubmit_document(
 # ─────────────────────────────────────────
 
 @router.post("/forgot-password")
-async def forgot_password(payload: CandidateAccountForgotPasswordIn = Body(...)):
+async def forgot_password(
+    payload: CandidateAccountForgotPasswordIn = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
     """Réinitialiser le mot de passe via email."""
     db = get_database()
     email = payload.email.strip().lower()
@@ -423,14 +425,12 @@ async def forgot_password(payload: CandidateAccountForgotPasswordIn = Body(...))
         }},
     )
 
-    try:
-        from email_service import notify_candidate_password_reset
-        full_name = f"{account.get('first_name', '')} {account.get('last_name', '')}".strip()
-        notify_candidate_password_reset(
-            email, full_name, account.get("account_id", ""), new_password
-        )
-    except Exception as e:
-        print(f"[EMAIL] Password reset failed for {email}: {e}")
+    from email_service import notify_candidate_password_reset
+    full_name = f"{account.get('first_name', '')} {account.get('last_name', '')}".strip()
+    background_tasks.add_task(
+        notify_candidate_password_reset,
+        email, full_name, account.get("account_id", ""), new_password,
+    )
 
     return {"message": _GENERIC_MSG}
 
