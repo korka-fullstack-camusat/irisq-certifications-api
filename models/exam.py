@@ -6,6 +6,8 @@ class ExamBase(BaseModel):
     certification: str
     title: str
     document_url: str
+    duration_minutes: Optional[int] = None   # durée de l'épreuve en minutes
+    session_id: Optional[str] = None          # session associée
 
 class ExamCreate(ExamBase):
     pass

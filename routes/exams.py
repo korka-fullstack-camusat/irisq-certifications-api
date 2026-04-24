@@ -92,13 +92,34 @@ async def create_exam(exam: ExamCreate = Body(...), current_user: UserOut = Depe
         print(f"Error creating exam: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to create exam: {str(e)}")
 
+_CERTIFICATIONS = [
+    "Junior Implementor ISO/IEC17025:2017",
+    "Implementor ISO/IEC17025:2017",
+    "Lead Implementor ISO/IEC17025:2017",
+    "Junior Implementor ISO 9001:2015",
+    "Implementor ISO 9001:2015",
+    "Lead Implementor ISO 9001:2015",
+    "Junior Implementor ISO 14001:2015",
+    "Implementor ISO 14001:2015",
+    "Lead Implementor ISO 14001:2015",
+    "Junior Implementor ISO 45001:2018",
+    "Implementor ISO 45001:2018",
+    "Lead Implementor ISO 45001:2018",
+]
+
+@router.get("/certifications", response_description="List all supported certifications")
+async def list_certifications():
+    return {"certifications": _CERTIFICATIONS}
+
 @router.get("/exams", response_description="List all exams")
-async def list_exams(certification: Optional[str] = None):
+async def list_exams(certification: Optional[str] = None, session_id: Optional[str] = None):
     db = get_database()
-    query = {}
+    query: dict = {}
     if certification:
         query["certification"] = certification
-        
+    if session_id:
+        query["session_id"] = session_id
+
     exams = await db["exams"].find(query).sort("created_at", -1).to_list(1000)
     return [serialize_doc(e) for e in exams]
 
