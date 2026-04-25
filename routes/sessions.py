@@ -51,9 +51,22 @@ def _iter_urls(value):
                 yield v
 
 
+def _safe_value(v):
+    """Convertit récursivement les types BSON en types JSON-sérialisables."""
+    if isinstance(v, ObjectId):
+        return str(v)
+    if isinstance(v, datetime):
+        return v.isoformat()
+    if isinstance(v, dict):
+        return {k: _safe_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_safe_value(item) for item in v]
+    return v
+
+
 def serialize(doc: dict) -> dict:
-    doc["_id"] = str(doc["_id"])
-    return doc
+    """Sérialise un document MongoDB en dict JSON-compatible."""
+    return {k: _safe_value(v) for k, v in doc.items()}
 
 
 async def _write_dossiers(zf: zipfile.ZipFile, responses: list, fs) -> None:

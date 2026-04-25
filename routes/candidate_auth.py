@@ -46,6 +46,15 @@ def _serialize_response(doc: dict) -> dict:
         "final_appreciation": doc.get("final_appreciation"),
         "must_change_password": bool(doc.get("must_change_password", False)),
         "exam_token": doc.get("exam_token"),
+        # Champs de blocage d'examen — utilisés côté candidat pour détecter
+        # si l'évaluateur a débloqué l'accès après un rechargement de page.
+        "exam_blocked": doc.get("exam_blocked"),
+        "exam_blocked_reason": doc.get("exam_blocked_reason"),
+        "exam_blocked_at": (
+            doc["exam_blocked_at"].isoformat()
+            if hasattr(doc.get("exam_blocked_at"), "isoformat")
+            else doc.get("exam_blocked_at")
+        ),
     }
 
 
@@ -286,8 +295,20 @@ async def report_blocked(
     payload: ReportBlockedIn = Body(...),
     candidate=Depends(get_current_candidate),
 ):
-    """Enregistre qu'un candidat a été bloqué pendant son examen (ex: rechargement de page)."""
+    """Enregistre qu'un candidat a été bloqué pendant son examen (ex: rechargement de page).
+
+    Garde-fou anti-cycle : si l'évaluateur a explicitement débloqué l'accès
+    (exam_blocked is False), on refuse de le re-bloquer ici afin d'éviter la
+    boucle : évaluateur débloque → candidat recharge → report-blocked → re-bloque.
+    Le frontend gère ce cas via la valeur renvoyée ("already_unblocked": True).
+    """
     db = get_database()
+    # Re-fetch le doc frais pour avoir exam_blocked à jour
+    fresh = await db["responses"].find_one({"_id": candidate["_id"]})
+    if fresh and fresh.get("exam_blocked") is False:
+        # L'évaluateur a débloqué → on ne re-bloque pas
+        return {"ok": True, "already_unblocked": True}
+
     await db["responses"].update_one(
         {"_id": candidate["_id"]},
         {"$set": {
@@ -296,7 +317,7 @@ async def report_blocked(
             "exam_blocked_at": datetime.utcnow(),
         }},
     )
-    return {"ok": True}
+    return {"ok": True, "already_unblocked": False}
 
 
 class ResubmitDocumentIn(BaseModel):
