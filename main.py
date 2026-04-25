@@ -5,7 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import os
 
 from database import connect_to_mongo, close_mongo_connection
-from routes import forms, responses, upload, exams, auth, sessions, candidate_account, audit_logs, correcteurs
+from routes import forms, responses, upload, exams, auth, sessions, candidate_auth, audit_logs, correcteurs
 from utils.indexes import create_indexes
 
 from rich.console import Console
@@ -95,6 +95,6 @@ app.include_router(forms.router, prefix="/api/forms", tags=["Forms"])
 app.include_router(responses.router, prefix="/api", tags=["Responses"])
 app.include_router(upload.router, prefix="/api", tags=["Uploads"])
 app.include_router(exams.router, prefix="/api", tags=["Exams"])
-app.include_router(candidate_account.router, prefix="/api/candidate", tags=["Candidate"])
+app.include_router(candidate_auth.router, prefix="/api/candidate", tags=["Candidate"])
 app.include_router(audit_logs.router, prefix="/api/audit-logs", tags=["Audit Logs"])
 app.include_router(correcteurs.router, prefix="/api", tags=["Correcteurs"])

@@ -178,7 +178,8 @@ async def publish_exam(
                 {"$set": {"exam_token": exam_token}}
             )
 
-        exam_link = f"{frontend_url}/examen/{exam_token}"
+        candidat_link = f"{frontend_url}/candidat/login"
+        start_time = exam.get("start_time")
 
         if candidate_email:
             # Queue each email as a background task — the loop returns immediately
@@ -188,7 +189,8 @@ async def publish_exam(
                 public_id=public_id,
                 candidate_name=full_name,
                 certification=certification_name,
-                exam_link=exam_link,
+                candidat_link=candidat_link,
+                start_time=start_time,
             )
             notified_count += 1
 

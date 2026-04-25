@@ -24,6 +24,42 @@ from database import get_database
 from email_service import notify_candidate_password_reset
 from utils.security import SECRET_KEY, ALGORITHM, verify_password, get_password_hash
 
+
+def _serialize_response(doc: dict) -> dict:
+    submitted = doc.get("submitted_at")
+    return {
+        "_id": str(doc["_id"]),
+        "public_id": doc.get("public_id"),
+        "candidate_id": doc.get("candidate_id"),
+        "name": doc.get("name"),
+        "email": doc.get("email"),
+        "status": doc.get("status"),
+        "session_id": doc.get("session_id"),
+        "submitted_at": submitted.isoformat() if hasattr(submitted, "isoformat") else submitted,
+        "answers": doc.get("answers") or {},
+        "documents_validation": doc.get("documents_validation") or {},
+        "exam_status": doc.get("exam_status"),
+        "exam_grade": doc.get("exam_grade"),
+        "exam_mode": doc.get("exam_mode"),
+        "exam_type": doc.get("exam_type"),
+        "final_grade": doc.get("final_grade"),
+        "final_appreciation": doc.get("final_appreciation"),
+        "must_change_password": bool(doc.get("must_change_password", False)),
+        "exam_token": doc.get("exam_token"),
+    }
+
+
+def _serialize_exam(doc: dict) -> dict:
+    return {
+        "_id": str(doc["_id"]),
+        "certification": doc.get("certification"),
+        "title": doc.get("title"),
+        "duration_minutes": doc.get("duration_minutes"),
+        "start_time": doc.get("start_time"),
+        "session_id": doc.get("session_id"),
+        "created_at": doc.get("created_at").isoformat() if hasattr(doc.get("created_at"), "isoformat") else doc.get("created_at"),
+    }
+
 router = APIRouter()
 
 CANDIDATE_TOKEN_AUDIENCE = "candidate"
@@ -217,3 +253,67 @@ async def candidate_change_password(
         response_id=response_id,
         must_change_password=False,
     )
+
+
+@router.get("/me")
+async def candidate_me(candidate=Depends(get_current_candidate)):
+    """Retourne le dossier du candidat connecté."""
+    return _serialize_response(candidate)
+
+
+@router.get("/exam")
+async def candidate_exam(candidate=Depends(get_current_candidate)):
+    """Retourne le dernier examen publié pour la certification du candidat."""
+    certification = (candidate.get("answers") or {}).get("Certification souhaitée")
+    if not certification:
+        return None
+    db = get_database()
+    exams = await db["exams"].find(
+        {"certification": certification}
+    ).sort("created_at", -1).limit(1).to_list(1)
+    if not exams:
+        return None
+    return _serialize_exam(exams[0])
+
+
+class ResubmitDocumentIn(BaseModel):
+    document_name: str
+    file_url: str
+
+
+@router.post("/resubmit-document")
+async def resubmit_document(
+    payload: ResubmitDocumentIn = Body(...),
+    candidate=Depends(get_current_candidate),
+):
+    """Renvoyer un document demandé par l'administration."""
+    db = get_database()
+
+    validation = candidate.get("documents_validation") or {}
+    entry = validation.get(payload.document_name) or {}
+    if not entry.get("resubmit_requested"):
+        raise HTTPException(
+            status_code=400,
+            detail="Ce document n'a pas été marqué pour renvoi par l'administration.",
+        )
+
+    now = datetime.utcnow()
+    updated_entry = {
+        **entry,
+        "valid": False,
+        "resubmit_requested": False,
+        "resubmitted_at": now.isoformat(),
+        "previous_url": entry.get("previous_url")
+            or (candidate.get("answers") or {}).get(payload.document_name),
+    }
+
+    await db["responses"].update_one(
+        {"_id": candidate["_id"]},
+        {"$set": {
+            f"answers.{payload.document_name}": payload.file_url,
+            f"documents_validation.{payload.document_name}": updated_entry,
+            "updated_at": now,
+        }},
+    )
+    updated = await db["responses"].find_one({"_id": candidate["_id"]})
+    return _serialize_response(updated)
