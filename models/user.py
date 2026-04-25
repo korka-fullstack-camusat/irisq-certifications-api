@@ -15,12 +15,14 @@ class UserInDB(BaseModel):
     role: str
     full_name: Optional[str] = None
     created_at: datetime
+    is_active: bool = True
 
 class UserOut(BaseModel):
     id: str
     email: str
     role: str
     full_name: Optional[str] = None
+    is_active: bool = True
 
 class Token(BaseModel):
     access_token: str

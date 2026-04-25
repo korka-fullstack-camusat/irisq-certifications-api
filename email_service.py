@@ -466,6 +466,147 @@ def notify_admin_password_reset(to_email: str, admin_name: str, new_password: st
     send_email(to_email, subject, html_body)
 
 
+def notify_correcteur_assignment(to_email: str, full_name: str, password: str, candidate_count: int):
+    """Envoie les identifiants de connexion au correcteur lors de sa première assignation."""
+    subject = "Vos accès correcteur — IRISQ Certifications"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_body = f"""
+    <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
+        <div style="text-align:center;margin-bottom:28px;">
+            <img src="{frontend_url}/logo.png" alt="IRISQ" width="64" height="64"
+                 style="border-radius:50%;border:3px solid #2e7d32;padding:4px;background:white;"/>
+            <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;margin-top:8px;">
+                IRISQ-CERTIFICATIONS
+            </div>
+        </div>
+        <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+            <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 8px;">
+                Assignation de copies
+            </h2>
+            <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
+                Bonjour <strong>{full_name}</strong>,<br>
+                <strong>{candidate_count} copie(s)</strong> vous ont été assignées pour correction.<br>
+                Veuillez vous connecter pour accéder à votre espace de correction.
+            </p>
+            <div style="height:1px;background:#e2e8f0;margin-bottom:24px;"></div>
+            <p style="color:#1a237e;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:0 0 12px;">
+                Vos identifiants de connexion
+            </p>
+            <table style="width:100%;font-size:14px;border-collapse:collapse;background:#f8fafc;border-radius:10px;overflow:hidden;">
+                <tr>
+                    <td style="padding:12px 16px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Email</td>
+                    <td style="padding:12px 16px;color:#1a237e;font-weight:700;font-family:monospace;text-align:right;border-bottom:1px solid #e2e8f0;">{to_email}</td>
+                </tr>
+                <tr>
+                    <td style="padding:12px 16px;color:#64748b;font-weight:600;">Mot de passe</td>
+                    <td style="padding:12px 16px;color:#1a237e;font-weight:700;font-family:monospace;font-size:16px;text-align:right;">{password}</td>
+                </tr>
+            </table>
+            <div style="text-align:center;margin-top:28px;">
+                <a href="{frontend_url}/login"
+                   style="display:inline-block;background:#1a237e;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;letter-spacing:.03em;">
+                    Accéder à mon espace correcteur
+                </a>
+            </div>
+            <div style="background:#fff8f1;border-left:4px solid #f97316;padding:14px;border-radius:0 8px 8px 0;margin-top:24px;">
+                <p style="color:#9a3412;font-size:13px;margin:0;line-height:1.5;">
+                    Ces identifiants sont strictement personnels. Ne les partagez avec personne.
+                </p>
+            </div>
+        </div>
+        <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
+        </p>
+    </div>
+    """
+    send_email(to_email, subject, html_body)
+
+
+def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: str, correcteur_email: str, candidate_count: int):
+    """Notifie l'évaluateur qu'un correcteur a terminé et signé toutes ses corrections."""
+    subject = f"Corrections terminées — {correcteur_name}"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_body = f"""
+    <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
+        <div style="text-align:center;margin-bottom:28px;">
+            <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">
+                IRISQ-CERTIFICATIONS
+            </div>
+        </div>
+        <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#e8f5e9;border-radius:50%;">
+                    <span style="font-size:28px;">✅</span>
+                </div>
+            </div>
+            <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 8px;">
+                Corrections signées
+            </h2>
+            <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
+                Le correcteur <strong>{correcteur_name}</strong> ({correcteur_email})<br>
+                a terminé et signé <strong>{candidate_count} correction(s)</strong>.<br>
+                Vous pouvez maintenant procéder à l'évaluation finale.
+            </p>
+            <div style="text-align:center;margin-top:24px;">
+                <a href="{frontend_url}/evaluateur/corrections"
+                   style="display:inline-block;background:#2e7d32;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
+                    Voir les résultats
+                </a>
+            </div>
+        </div>
+        <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
+        </p>
+    </div>
+    """
+    send_email(evaluateur_email, subject, html_body)
+
+
+def notify_correcteur_relance(to_email: str, full_name: str, pending_count: int, evaluateur_name: str):
+    """Envoie une relance au correcteur pour lui rappeler les copies en attente."""
+    subject = f"Rappel — {pending_count} copie(s) en attente de correction"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_body = f"""
+    <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
+        <div style="text-align:center;margin-bottom:28px;">
+            <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">
+                IRISQ-CERTIFICATIONS
+            </div>
+        </div>
+        <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#fff3e0;border-radius:50%;">
+                    <span style="font-size:28px;">⏰</span>
+                </div>
+            </div>
+            <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 8px;">
+                Rappel de correction
+            </h2>
+            <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
+                Bonjour <strong>{full_name}</strong>,<br>
+                <strong>{pending_count} copie(s)</strong> vous ont été assignées et sont toujours en attente de correction.<br>
+                L'évaluateur <strong>{evaluateur_name}</strong> attend vos corrections.
+            </p>
+            <div style="background:#fff8f1;border-left:4px solid #f97316;padding:16px;border-radius:0 8px 8px 0;margin-bottom:24px;">
+                <p style="color:#9a3412;font-size:14px;margin:0;line-height:1.5;">
+                    Merci de vous connecter et de finaliser vos corrections dès que possible.
+                </p>
+            </div>
+            <div style="text-align:center;">
+                <a href="{frontend_url}/login"
+                   style="display:inline-block;background:#1a237e;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
+                    Accéder à mon espace correcteur
+                </a>
+            </div>
+        </div>
+        <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
+        </p>
+    </div>
+    """
+    send_email(to_email, subject, html_body)
+
+
 def notify_candidate_password_reset(to_email: str, candidate_name: str, public_id: str, new_password: str):
     """Send a freshly generated temporary password after a forgot-password request.
 

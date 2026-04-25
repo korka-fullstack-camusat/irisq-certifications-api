@@ -45,11 +45,15 @@ async def get_current_user_logic(token: str):
     if user is None:
         raise credentials_exception
 
+    if not user.get("is_active", True):
+        raise credentials_exception
+
     user_out = UserOut(
         id=str(user["_id"]),
         email=user["email"],
         role=user["role"],
         full_name=user.get("full_name"),
+        is_active=user.get("is_active", True),
     )
     _USER_CACHE[email] = (user_out, now)
     return user_out
