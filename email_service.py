@@ -688,3 +688,67 @@ def notify_candidate_password_reset(to_email: str, candidate_name: str, public_i
     </div>
     """
     send_email(to_email, subject, html_body)
+
+
+def notify_candidate_exam_unblocked(to_email: str, candidate_name: str, public_id: str, certification: str):
+    """Notify a candidate that their blocked exam access has been restored."""
+    subject = f"Accès à l'examen restauré — {certification}"
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_body = f"""
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
+
+        <div style="text-align: center; margin-bottom: 28px;">
+            <div style="color: #1a237e; font-weight: 800; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase;">
+                IRISQ-CERTIFICATIONS
+            </div>
+        </div>
+
+        <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+
+            <div style="text-align: center; margin-bottom: 20px;">
+                <div style="display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; background: #e8f5e9; border-radius: 50%; font-size: 24px;">
+                    &#128275;
+                </div>
+            </div>
+
+            <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 12px 0;">
+                Accès restauré
+            </h2>
+            <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 24px 0;">
+                Bonjour <strong>{candidate_name}</strong>,<br>
+                votre accès à l'épreuve technique <strong>{certification}</strong> a été rétabli par l'évaluateur.<br>
+                Vous pouvez à nouveau vous connecter à votre espace candidat et passer l'examen.
+            </p>
+
+            <div style="background: #f8fafc; border-radius: 12px; padding: 16px; margin-bottom: 24px; border: 1px solid #e2e8f0;">
+                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Identifiant</td>
+                        <td style="padding: 6px 0; color: #1a237e; font-weight: 700; font-family: monospace; text-align: right;">{public_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Certification</td>
+                        <td style="padding: 6px 0; color: #0f172a; font-weight: 700; text-align: right; border-top: 1px solid #e2e8f0;">{certification}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div style="background: #fff1f2; border-left: 4px solid #e11d48; padding: 14px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
+                <p style="color: #9f1239; font-size: 13px; margin: 0; line-height: 1.6;">
+                    <strong>Attention :</strong> Un nouveau rechargement de page pendant l'examen entraînera à nouveau le verrouillage de votre accès. Assurez-vous d'avoir une connexion stable avant de commencer.
+                </p>
+            </div>
+
+            <div style="text-align: center;">
+                <a href="{frontend_url}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
+                    Accéder à mon espace candidat
+                </a>
+            </div>
+        </div>
+
+        <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
+            © IRISQ — Institut des Risques &amp; de la Qualité
+        </p>
+    </div>
+    """
+    send_email(to_email, subject, html_body)

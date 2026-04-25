@@ -58,6 +58,7 @@ def _serialize_exam(doc: dict) -> dict:
         "start_time": doc.get("start_time"),
         "session_id": doc.get("session_id"),
         "created_at": doc.get("created_at").isoformat() if hasattr(doc.get("created_at"), "isoformat") else doc.get("created_at"),
+        "parsed_questions": doc.get("parsed_questions", []),
     }
 
 router = APIRouter()
@@ -274,6 +275,28 @@ async def candidate_exam(candidate=Depends(get_current_candidate)):
     if not exams:
         return None
     return _serialize_exam(exams[0])
+
+
+class ReportBlockedIn(BaseModel):
+    reason: str = "Rechargement de page pendant l'examen"
+
+
+@router.post("/report-blocked")
+async def report_blocked(
+    payload: ReportBlockedIn = Body(...),
+    candidate=Depends(get_current_candidate),
+):
+    """Enregistre qu'un candidat a été bloqué pendant son examen (ex: rechargement de page)."""
+    db = get_database()
+    await db["responses"].update_one(
+        {"_id": candidate["_id"]},
+        {"$set": {
+            "exam_blocked": True,
+            "exam_blocked_reason": payload.reason,
+            "exam_blocked_at": datetime.utcnow(),
+        }},
+    )
+    return {"ok": True}
 
 
 class ResubmitDocumentIn(BaseModel):

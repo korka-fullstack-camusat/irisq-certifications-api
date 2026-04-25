@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 
@@ -32,6 +32,16 @@ class ResponseBase(BaseModel):
     exam_answers: Optional[list[Dict[str, Any]]] = None
     assigned_examiner_email: Optional[str] = None
     candidate_photos: Optional[list[str]] = None
+
+    # Per-question grading: [{question_id, points_earned, max_points, comment}]
+    answer_grades: Optional[List[Dict[str, Any]]] = None
+    is_correction_locked: Optional[bool] = None
+    correction_locked_at: Optional[datetime] = None
+
+    # Blocage d'examen (rechargement de page, triche avérée, etc.)
+    exam_blocked: Optional[bool] = None
+    exam_blocked_reason: Optional[str] = None
+    exam_blocked_at: Optional[datetime] = None
 
     # Document validation checklist
     # Shape: { "<document_key>": { "valid": true|false, "notes": "..." } }
@@ -69,9 +79,10 @@ class EvaluatorDocUpdate(BaseModel):
 
 
 class ExamSubmissionUpdate(BaseModel):
-    exam_grade: str
+    exam_grade: Optional[str] = None          # note finale (manuelle ou calculée)
     exam_status: str
     exam_comments: Optional[str] = None
+    answer_grades: Optional[List[Dict[str, Any]]] = None  # [{question_id, points_earned, max_points, comment}]
 
 
 class AntiCheatUpdate(BaseModel):

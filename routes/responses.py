@@ -20,6 +20,7 @@ from email_service import (
     notify_examiner_assignment,
     notify_candidate_submission_received,
     notify_candidate_document_issue,
+    notify_candidate_exam_unblocked,
 )
 from services.pdf_generator import generate_and_upload_candidate_pdf
 from utils.audit import log_action
@@ -42,6 +43,12 @@ def serialize_doc(doc, user_role: Optional[str] = None):
             "exam_status": doc.get("exam_status"),
             "exam_comments": doc.get("exam_comments"),
             "assigned_examiner_email": doc.get("assigned_examiner_email"),
+            "exam_answers": doc.get("exam_answers"),
+            "answer_grades": doc.get("answer_grades"),
+            "is_correction_locked": doc.get("is_correction_locked"),
+            "exam_blocked": doc.get("exam_blocked"),
+            "exam_blocked_reason": doc.get("exam_blocked_reason"),
+            "exam_blocked_at": doc.get("exam_blocked_at"),
             "answers": {
                 "Certification souhaitée": cert_name
             }
@@ -384,13 +391,32 @@ async def update_exam_grade(id: str, grade_update: ExamSubmissionUpdate = Body(.
     if response_in_db.get("assigned_examiner_email") != current_user.email:
         raise HTTPException(status_code=403, detail="Not assigned to this exam")
 
+    if response_in_db.get("is_correction_locked"):
+        raise HTTPException(status_code=403, detail="Cette correction est verrouillée et ne peut plus être modifiée.")
+
+    updates: dict = {
+        "exam_status": grade_update.exam_status,
+        "exam_comments": grade_update.exam_comments,
+    }
+
+    if grade_update.answer_grades:
+        updates["answer_grades"] = grade_update.answer_grades
+        if grade_update.exam_grade:
+            updates["exam_grade"] = grade_update.exam_grade
+        else:
+            # Auto-calculate total from per-question grades
+            total_earned = sum(float(g.get("points_earned", 0)) for g in grade_update.answer_grades)
+            total_max = sum(float(g.get("max_points", 0)) for g in grade_update.answer_grades)
+            if total_max > 0:
+                updates["exam_grade"] = f"{total_earned:.2g}/{total_max:.2g}"
+            else:
+                updates["exam_grade"] = str(total_earned)
+    elif grade_update.exam_grade:
+        updates["exam_grade"] = grade_update.exam_grade
+
     updated = await db["responses"].update_one(
         {"_id": ObjectId(id)},
-        {"$set": {
-            "exam_grade": grade_update.exam_grade,
-            "exam_status": grade_update.exam_status,
-            "exam_comments": grade_update.exam_comments
-        }}
+        {"$set": updates}
     )
 
     if updated.matched_count == 1:
@@ -408,6 +434,97 @@ async def update_exam_grade(id: str, grade_update: ExamSubmissionUpdate = Body(.
         return serialize_doc(updated_response, user_role=current_user.role)
 
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
+
+
+@router.post("/responses/{id}/lock-correction", response_description="Verrouiller définitivement la correction d'une copie")
+async def lock_correction(id: str, current_user: UserOut = Depends(require_role(["CORRECTEUR"]))):
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid response ID format")
+
+    response_in_db = await db["responses"].find_one({"_id": ObjectId(id)})
+    if not response_in_db:
+        raise HTTPException(status_code=404, detail=f"Response {id} not found")
+
+    if response_in_db.get("assigned_examiner_email") != current_user.email:
+        raise HTTPException(status_code=403, detail="Not assigned to this exam")
+
+    if response_in_db.get("is_correction_locked"):
+        raise HTTPException(status_code=409, detail="Cette correction est déjà verrouillée.")
+
+    if not response_in_db.get("exam_grade"):
+        raise HTTPException(status_code=400, detail="Vous devez d'abord enregistrer une note avant de verrouiller.")
+
+    updated = await db["responses"].update_one(
+        {"_id": ObjectId(id)},
+        {"$set": {"is_correction_locked": True, "correction_locked_at": datetime.utcnow()}}
+    )
+
+    if updated.matched_count == 1:
+        updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+        await log_action(
+            action="correction_locked",
+            resource_type="response",
+            resource_id=id,
+            user_email=current_user.email,
+            user_role=current_user.role,
+            user_name=current_user.full_name,
+            resource_label=updated_response.get("public_id", id),
+        )
+        return serialize_doc(updated_response, user_role=current_user.role)
+
+    raise HTTPException(status_code=404, detail=f"Response {id} not found")
+
+
+@router.post("/responses/{id}/unblock-exam", response_description="Débloquer l'accès à l'examen d'un candidat bloqué")
+async def unblock_exam(
+    id: str,
+    background_tasks: BackgroundTasks,
+    current_user: UserOut = Depends(require_role(["EVALUATEUR", "RH"])),
+):
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid response ID format")
+
+    response_in_db = await db["responses"].find_one({"_id": ObjectId(id)})
+    if not response_in_db:
+        raise HTTPException(status_code=404, detail=f"Response {id} not found")
+
+    await db["responses"].update_one(
+        {"_id": ObjectId(id)},
+        {"$set": {
+            "exam_blocked": False,
+            "exam_blocked_reason": None,
+            "exam_blocked_at": None,
+            "exam_unblocked_by": current_user.email,
+            "exam_unblocked_at": datetime.utcnow(),
+        }},
+    )
+    updated_response = await db["responses"].find_one({"_id": ObjectId(id)})
+    await log_action(
+        action="exam_unblocked",
+        resource_type="response",
+        resource_id=id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=updated_response.get("public_id", id),
+    )
+
+    # Notifier le candidat par email
+    candidate_email = updated_response.get("email")
+    if candidate_email:
+        certification = (updated_response.get("answers") or {}).get("Certification souhaitée", "")
+        background_tasks.add_task(
+            notify_candidate_exam_unblocked,
+            candidate_email,
+            updated_response.get("name") or "Candidat",
+            updated_response.get("public_id") or "",
+            certification,
+        )
+
+    return serialize_doc(updated_response, user_role=current_user.role)
+
 
 @router.patch("/responses/{id}/anti-cheat", response_description="Submit technical exam with anti-cheat report")
 async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body(...)):
