@@ -42,6 +42,7 @@ def serialize_doc(doc, user_role: Optional[str] = None):
             "exam_grade": doc.get("exam_grade"),
             "exam_status": doc.get("exam_status"),
             "exam_comments": doc.get("exam_comments"),
+            "exam_appreciation": doc.get("exam_appreciation"),
             "assigned_examiner_email": doc.get("assigned_examiner_email"),
             "exam_answers": doc.get("exam_answers"),
             "answer_grades": doc.get("answer_grades"),
@@ -398,6 +399,9 @@ async def update_exam_grade(id: str, grade_update: ExamSubmissionUpdate = Body(.
         "exam_status": grade_update.exam_status,
         "exam_comments": grade_update.exam_comments,
     }
+
+    if grade_update.exam_appreciation is not None:
+        updates["exam_appreciation"] = grade_update.exam_appreciation
 
     if grade_update.answer_grades:
         updates["answer_grades"] = grade_update.answer_grades

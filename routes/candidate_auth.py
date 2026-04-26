@@ -44,6 +44,7 @@ def _serialize_response(doc: dict) -> dict:
         "exam_type": doc.get("exam_type"),
         "final_grade": doc.get("final_grade"),
         "final_appreciation": doc.get("final_appreciation"),
+        "exam_appreciation": doc.get("exam_appreciation"),
         "must_change_password": bool(doc.get("must_change_password", False)),
         "exam_token": doc.get("exam_token"),
         # Champs de blocage d'examen — utilisés côté candidat pour détecter

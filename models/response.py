@@ -82,6 +82,7 @@ class ExamSubmissionUpdate(BaseModel):
     exam_grade: Optional[str] = None          # note finale (manuelle ou calculée)
     exam_status: str
     exam_comments: Optional[str] = None
+    exam_appreciation: Optional[str] = None   # ex: "Bien", "Très bien", "Insuffisant"…
     answer_grades: Optional[List[Dict[str, Any]]] = None  # [{question_id, points_earned, max_points, comment}]
 
 
