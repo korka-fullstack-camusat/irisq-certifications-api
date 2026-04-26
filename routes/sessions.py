@@ -308,7 +308,7 @@ async def check_session_eligibility(
 @router.get("/{session_id}/responses", response_description="List candidatures of a given session")
 async def list_session_responses(
     session_id: str,
-    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR", "COMITE"])),
 ):
     db = get_database()
     if not ObjectId.is_valid(session_id):
