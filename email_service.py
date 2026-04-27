@@ -14,9 +14,12 @@ SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 RH_EMAIL = os.getenv("RH_EMAIL", "")
 EVALUATOR_EMAIL = os.getenv("EVALUATOR_EMAIL", "")
 
+# RH_EMAIL peut contenir plusieurs adresses séparées par des virgules
+RH_EMAILS: list[str] = [e.strip() for e in RH_EMAIL.split(",") if e.strip()]
+
 
 def send_email(to_email: str, subject: str, html_body: str):
-    """Send an email via Gmail SMTP."""
+    """Send an email via Gmail SMTP. to_email peut être une adresse unique."""
     if not SMTP_USER or not SMTP_PASSWORD or SMTP_PASSWORD == "VOTRE_MOT_DE_PASSE_APPLICATION_GOOGLE":
         print(f"[EMAIL] SMTP non configuré — email ignoré vers {to_email}")
         print(f"[EMAIL] Sujet: {subject}")
@@ -38,8 +41,17 @@ def send_email(to_email: str, subject: str, html_body: str):
         print(f"[EMAIL] Email envoyé avec succès à {to_email}")
         return True
     except Exception as e:
-        print(f"[EMAIL] Erreur lors de l'envoi au candidat ({to_email}): {e}")
+        print(f"[EMAIL] Erreur lors de l'envoi ({to_email}): {e}")
         return False
+
+
+def send_email_multi(to_emails: list[str], subject: str, html_body: str):
+    """Envoie le même email à plusieurs destinataires."""
+    success = True
+    for addr in to_emails:
+        if not send_email(addr, subject, html_body):
+            success = False
+    return success
 
 
 def notify_rh_new_submission(candidate_id: str, candidate_name: str, certification: str):
@@ -91,7 +103,7 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
         </p>
     </div>
     """
-    send_email(RH_EMAIL, subject, html_body)
+    send_email_multi(RH_EMAILS, subject, html_body)
 
 
 def notify_candidate_submission_received(to_email: str, candidate_name: str, public_id: str, certification: str, default_password: str = ""):
