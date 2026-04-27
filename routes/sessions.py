@@ -274,6 +274,7 @@ async def delete_session(
 async def check_session_eligibility(
     session_id: str,
     email: str = Query(..., description="Candidate email to check"),
+    certification: Optional[str] = Query(None, description="Certification name to check specifically"),
 ):
     db = get_database()
     if not ObjectId.is_valid(session_id):
@@ -283,25 +284,43 @@ async def check_session_eligibility(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    existing = await db["responses"].find_one({
+    email_query: dict = {
         "session_id": session_id,
-        "email": {"$regex": f"^{email}$", "$options": "i"},
-    })
+        "email": {"$regex": f"^{re.escape(email.strip().lower())}$", "$options": "i"},
+    }
+    if certification:
+        email_query["answers.Certification souhaitée"] = certification.strip()
 
-    if not existing:
+    existing_list = await db["responses"].find(email_query).to_list(50)
+
+    if not existing_list:
         return {"eligible": True}
 
-    if existing.get("status") == "rejected":
+    rejected = next((e for e in existing_list if e.get("status") == "rejected"), None)
+    if rejected:
         return {
             "eligible": False,
             "code": "APPLICATION_REJECTED",
-            "message": "Votre candidature a été rejetée pour cette session. Veuillez attendre l'ouverture d'une prochaine session.",
+            "message": "Votre candidature a été rejetée pour cette certification dans cette session. Veuillez attendre l'ouverture d'une prochaine session.",
         }
 
+    if certification:
+        return {
+            "eligible": False,
+            "code": "ALREADY_APPLIED",
+            "message": f"Vous avez déjà postulé à « {certification.strip()} » pour la session en cours.",
+        }
+
+    # No certification specified — informational (different certs allowed)
+    certs = list({
+        (e.get("answers") or {}).get("Certification souhaitée", "Autre certification")
+        for e in existing_list
+    })
     return {
-        "eligible": False,
-        "code": "ALREADY_APPLIED",
-        "message": "Vous avez déjà postulé à cette session. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+        "eligible": True,
+        "code": "HAS_OTHER_APPLICATION",
+        "existing_certifications": certs,
+        "message": f"Vous avez déjà une candidature en cours ({', '.join(certs)}). Vous pouvez postuler à une autre certification.",
     }
 
 

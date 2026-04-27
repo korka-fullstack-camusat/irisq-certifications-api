@@ -77,46 +77,86 @@ def serialize_doc(doc, user_role: Optional[str] = None):
     return doc
 
 @router.get("/responses/check-email", response_description="Check if an email is eligible to apply across all active sessions")
-async def check_email_eligibility(email: str = Query(..., description="Candidate email to verify")):
+async def check_email_eligibility(
+    email: str = Query(..., description="Candidate email to verify"),
+    certification: Optional[str] = Query(None, description="Certification name to check specifically"),
+):
     """
-    Public endpoint — called by the candidature form as soon as the user
-    finishes typing their email address.  Returns whether the email already
-    has an open or rejected candidature in any currently-active session.
+    Public endpoint — called by the candidature form on email blur.
+
+    If certification is provided:
+    - Same certification already applied → blocked (ALREADY_APPLIED)
+    - Different certification → eligible but warns (HAS_OTHER_APPLICATION)
+    If omitted → warns with HAS_EXISTING_APPLICATION (informational, not blocking).
     """
     db = get_database()
     trimmed = email.strip().lower()
     if not trimmed:
         raise HTTPException(status_code=400, detail="Email is required")
 
-    # Collect all active session IDs (fast: indexed on status)
-    active_sessions = await db["sessions"].find(
-        {"status": "active"}, {"_id": 1}
-    ).to_list(200)
+    active_sessions = await db["sessions"].find({"status": "active"}, {"_id": 1}).to_list(200)
     active_ids = [str(s["_id"]) for s in active_sessions]
 
     if not active_ids:
         return {"eligible": True}
 
-    # Case-insensitive email match against any active session
-    existing = await db["responses"].find_one({
+    existing_list = await db["responses"].find({
         "session_id": {"$in": active_ids},
         "email": {"$regex": f"^{re.escape(trimmed)}$", "$options": "i"},
-    })
+    }).to_list(50)
 
-    if not existing:
+    if not existing_list:
         return {"eligible": True}
 
-    if existing.get("status") == "rejected":
+    # Rejected → hard block regardless of certification
+    rejected = next((e for e in existing_list if e.get("status") == "rejected"), None)
+    if rejected:
         return {
             "eligible": False,
             "code": "APPLICATION_REJECTED",
             "message": "Votre candidature a été rejetée pour la session en cours. Veuillez attendre l'ouverture d'une nouvelle session.",
         }
 
+    if certification:
+        cert_norm = certification.strip()
+        same_cert = [
+            e for e in existing_list
+            if (e.get("answers") or {}).get("Certification souhaitée", "").strip() == cert_norm
+        ]
+        other_cert = [
+            e for e in existing_list
+            if (e.get("answers") or {}).get("Certification souhaitée", "").strip() != cert_norm
+        ]
+
+        if same_cert:
+            return {
+                "eligible": False,
+                "code": "ALREADY_APPLIED",
+                "message": f"Vous avez déjà soumis une candidature pour « {cert_norm} » dans la session en cours.",
+            }
+
+        if other_cert:
+            certs = list({
+                (e.get("answers") or {}).get("Certification souhaitée", "Autre certification")
+                for e in other_cert
+            })
+            return {
+                "eligible": True,
+                "code": "HAS_OTHER_APPLICATION",
+                "existing_certifications": certs,
+                "message": f"Vous avez déjà une candidature en cours pour : {', '.join(certs)}. Vous pouvez postuler à une autre certification.",
+            }
+
+    # No certification specified — warn without blocking
+    certs = list({
+        (e.get("answers") or {}).get("Certification souhaitée", "Autre certification")
+        for e in existing_list
+    })
     return {
-        "eligible": False,
-        "code": "ALREADY_APPLIED",
-        "message": "Vous avez déjà soumis une candidature pour la session en cours. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+        "eligible": True,
+        "code": "HAS_EXISTING_APPLICATION",
+        "existing_certifications": certs,
+        "message": f"Vous avez déjà une candidature en cours ({', '.join(certs)}). Vous pouvez postuler à une autre certification.",
     }
 
 
@@ -144,35 +184,46 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
     session_seq = 0
     candidate_seq = 0
     if session_id and response_dict.get("email"):
-        # Guard: check if this email already has a candidature on this session
-        existing = await db["responses"].find_one({
+        # Guard: same email + same session + same certification → duplicate.
+        # Different certification in the same session is allowed.
+        cert_name = (response_dict.get("answers") or {}).get("Certification souhaitée", "").strip()
+        dup_query: dict = {
             "session_id": session_id,
-            "email": {"$regex": f"^{response_dict['email']}$", "$options": "i"},
-        })
+            "email": {"$regex": f"^{re.escape(response_dict['email'].strip().lower())}$", "$options": "i"},
+        }
+        if cert_name:
+            dup_query["answers.Certification souhaitée"] = cert_name
+
+        existing = await db["responses"].find_one(dup_query)
         if existing:
             if existing.get("status") == "rejected":
                 raise HTTPException(
                     status_code=403,
                     detail={
                         "code": "APPLICATION_REJECTED",
-                        "message": "Votre candidature a été rejetée pour cette session. Veuillez attendre l'ouverture d'une prochaine session.",
+                        "message": "Votre candidature a été rejetée pour cette certification dans cette session. Veuillez attendre l'ouverture d'une prochaine session.",
                     },
                 )
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "ALREADY_APPLIED",
-                    "message": "Vous avez déjà postulé à cette session. Vous ne pouvez pas postuler à nouveau tant que la session est ouverte.",
+                    "message": f"Vous avez déjà postulé à « {cert_name or 'cette certification'} » pour la session en cours.",
                 },
             )
     if session_id:
         if not ObjectId.is_valid(session_id):
             raise HTTPException(status_code=400, detail="Invalid session ID format")
-        session_doc = await db["sessions"].find_one_and_update(
-            {"_id": ObjectId(session_id)},
-            {"$inc": {"candidate_counter": 1}},
-            return_document=ReturnDocument.AFTER,
-        )
+        # If a public_id is already provided (2nd cert in a multi-certification submission),
+        # don't increment the counter — the candidate already has their matricule.
+        if response_dict.get("public_id"):
+            session_doc = await db["sessions"].find_one({"_id": ObjectId(session_id)})
+        else:
+            session_doc = await db["sessions"].find_one_and_update(
+                {"_id": ObjectId(session_id)},
+                {"$inc": {"candidate_counter": 1}},
+                return_document=ReturnDocument.AFTER,
+            )
         if not session_doc:
             raise HTTPException(status_code=404, detail="Session not found")
         session_seq = session_doc.get("sequence_number") or 1
@@ -226,6 +277,97 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
         )
 
     return serialize_doc(created_response)
+
+
+@router.get("/responses/multi-candidatures", response_description="Candidats ayant postulé à plusieurs formations dans la même session")
+async def list_multi_candidatures(
+    session_id: Optional[str] = Query(None, description="Filtrer par session"),
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
+    """
+    Retourne les candidats ayant soumis plus d'une candidature pour des certifications
+    différentes dans la même session.
+    Chaque entrée groupe les dossiers complets par (email × session_id).
+    """
+    db = get_database()
+
+    match_filter: dict = {}
+    if session_id:
+        if not ObjectId.is_valid(session_id):
+            raise HTTPException(status_code=400, detail="ID de session invalide")
+        match_filter["session_id"] = session_id
+
+    # First: find (email × session_id) groups with count > 1
+    pipeline = [
+        {"$match": match_filter},
+        {"$group": {
+            "_id": {"email": "$email", "session_id": "$session_id"},
+            "count": {"$sum": 1},
+            "response_ids": {"$push": {"$toString": "$_id"}},
+            "name": {"$first": "$name"},
+            "email": {"$first": "$email"},
+            "session_id": {"$first": "$session_id"},
+            "candidate_account_id": {"$first": "$candidate_account_id"},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+        {"$sort": {"session_id": 1, "email": 1}},
+    ]
+
+    groups = await db["responses"].aggregate(pipeline).to_list(500)
+
+    # Enrich with session names
+    session_ids = list({g["session_id"] for g in groups if g.get("session_id")})
+    sessions_map: dict = {}
+    if session_ids:
+        valid_ids = [sid for sid in session_ids if ObjectId.is_valid(sid)]
+        async for s in db["sessions"].find({"_id": {"$in": [ObjectId(s) for s in valid_ids]}}):
+            sessions_map[str(s["_id"])] = s.get("name", str(s["_id"]))
+
+    # Fetch full dossier data for each group
+    results = []
+    for g in groups:
+        ids = [ObjectId(rid) for rid in g["response_ids"] if ObjectId.is_valid(rid)]
+        raw_dossiers = await db["responses"].find({"_id": {"$in": ids}}).sort("submitted_at", 1).to_list(20)
+
+        dossiers_out = []
+        for d in raw_dossiers:
+            submitted = d.get("submitted_at")
+            dossiers_out.append({
+                "_id": str(d["_id"]),
+                "public_id": d.get("public_id"),
+                "form_id": d.get("form_id"),
+                "status": d.get("status"),
+                "exam_mode": d.get("exam_mode"),
+                "exam_type": d.get("exam_type"),
+                "exam_status": d.get("exam_status"),
+                "exam_grade": d.get("exam_grade"),
+                "final_grade": d.get("final_grade"),
+                "final_appreciation": d.get("final_appreciation"),
+                "submitted_at": submitted.isoformat() if isinstance(submitted, datetime) else submitted,
+                "certification": (d.get("answers") or {}).get("Certification souhaitée", "N/A"),
+                "answers": {
+                    k: v for k, v in (d.get("answers") or {}).items()
+                    if k in (
+                        "Certification souhaitée", "Mode d'examen", "Type d'examen",
+                        "CV", "Pièce d'identité", "Justificatif d'expérience", "Diplômes",
+                        "Attestation de formation",
+                    )
+                },
+                "documents_validation": d.get("documents_validation") or {},
+            })
+
+        results.append({
+            "email": g["email"],
+            "name": g["name"],
+            "session_id": g["session_id"],
+            "session_name": sessions_map.get(g["session_id"], g["session_id"]),
+            "candidate_account_id": g.get("candidate_account_id"),
+            "candidatures_count": g["count"],
+            "dossiers": dossiers_out,
+        })
+
+    return results
+
 
 @router.get("/forms/{form_id}/responses", response_description="Get all responses for a form")
 async def list_responses(form_id: str, current_user: UserOut = Depends(get_current_user)):

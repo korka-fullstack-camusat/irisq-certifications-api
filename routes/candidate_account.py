@@ -252,16 +252,28 @@ async def apply(
     if not form:
         raise HTTPException(status_code=404, detail="Certification introuvable")
 
-    # Vérifier si le candidat a déjà postulé à cette certification
-    existing = await db["responses"].find_one({
+    # Vérifier si le candidat a déjà postulé à cette certification dans la même session.
+    # La certification vient de payload.answers ou à défaut du titre du formulaire.
+    cert_name_from_payload = (dict(payload.answers or {}).get("Certification souhaitée") or "").strip()
+    session_id_check = payload.session_id
+
+    dup_filter: dict = {
         "candidate_account_id": str(account["_id"]),
-        "form_id": form_id,
         "status": {"$nin": ["rejected"]},
-    })
+    }
+    if session_id_check:
+        dup_filter["session_id"] = session_id_check
+    if cert_name_from_payload:
+        dup_filter["answers.Certification souhaitée"] = cert_name_from_payload
+    else:
+        # Fallback: block by form_id if no cert name available
+        dup_filter["form_id"] = form_id
+
+    existing = await db["responses"].find_one(dup_filter)
     if existing:
         raise HTTPException(
             status_code=409,
-            detail="Vous avez déjà une candidature active pour cette certification.",
+            detail=f"Vous avez déjà une candidature active pour « {cert_name_from_payload or 'cette certification'} » dans cette session.",
         )
 
     # Infos personnelles depuis le compte
