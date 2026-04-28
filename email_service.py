@@ -6,16 +6,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_HOST    = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER    = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
-RH_EMAIL = os.getenv("RH_EMAIL", "")
+SMTP_FROM    = os.getenv("SMTP_FROM", SMTP_USER)
+RH_EMAIL     = os.getenv("RH_EMAIL", "")
 EVALUATOR_EMAIL = os.getenv("EVALUATOR_EMAIL", "")
 
 # RH_EMAIL peut contenir plusieurs adresses séparées par des virgules
 RH_EMAILS: list[str] = [e.strip() for e in RH_EMAIL.split(",") if e.strip()]
+
+# ── URL du frontend ──────────────────────────────────────────────────────────
+# En local  : définie dans .env  →  FRONTEND_URL=http://localhost:3000
+# En prod   : définie dans les variables d'environnement Render
+#             →  FRONTEND_URL=https://irisq-certifications.vercel.app
+FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 
 def send_email(to_email: str, subject: str, html_body: str):
@@ -57,7 +63,7 @@ def send_email_multi(to_emails: list[str], subject: str, html_body: str):
 def notify_rh_new_submission(candidate_id: str, candidate_name: str, certification: str):
     """Notify RH that a new candidate submitted a form."""
     subject = f"Nouvelle candidature — {candidate_id} — {certification}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -108,7 +114,7 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
 
 def notify_candidate_submission_received(to_email: str, candidate_name: str, public_id: str, certification: str, default_password: str = ""):
     """Notify the candidate that their submission was successfully received."""
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     subject = f"Votre candidature a été envoyée — {certification}"
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
@@ -335,7 +341,7 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
 def notify_examiner_assignment(to_email: str, candidate_id: str, certification: str):
     """Notify an examiner that a new exam copy has been assigned to them."""
     subject = f"Nouvelle Copie à Corriger — {candidate_id}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
@@ -384,7 +390,7 @@ def notify_examiner_assignment(to_email: str, candidate_id: str, certification: 
 def notify_candidate_document_issue(to_email: str, candidate_name: str, public_id: str, certification: str, document_name: str, message: str = ""):
     """Ask the candidate to re-upload a specific document that was rejected during validation."""
     subject = f"Document à renvoyer — {document_name} — {public_id}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     safe_message = (message or "").strip()
     extra_block = ""
     if safe_message:
@@ -452,7 +458,7 @@ def notify_candidate_document_issue(to_email: str, candidate_name: str, public_i
 def notify_admin_password_reset(to_email: str, admin_name: str, new_password: str):
     """Send a temporary password to an admin user after a forgot-password request."""
     subject = "Réinitialisation de votre mot de passe administrateur — IRISQ"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
         <div style="text-align: center; margin-bottom: 28px;">
@@ -504,7 +510,7 @@ def notify_admin_password_reset(to_email: str, admin_name: str, new_password: st
 def notify_correcteur_assignment(to_email: str, full_name: str, password: str, candidate_count: int):
     """Envoie les identifiants de connexion au correcteur lors de sa première assignation."""
     subject = "Vos accès correcteur — IRISQ Certifications"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
@@ -560,7 +566,7 @@ def notify_correcteur_assignment(to_email: str, full_name: str, password: str, c
 def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: str, correcteur_email: str, candidate_count: int):
     """Notifie l'évaluateur qu'un correcteur a terminé et signé toutes ses corrections."""
     subject = f"Corrections terminées — {correcteur_name}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
@@ -600,7 +606,7 @@ def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: 
 def notify_correcteur_relance(to_email: str, full_name: str, pending_count: int, evaluateur_name: str):
     """Envoie une relance au correcteur pour lui rappeler les copies en attente."""
     subject = f"Rappel — {pending_count} copie(s) en attente de correction"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
@@ -648,7 +654,7 @@ def notify_candidate_password_reset(to_email: str, candidate_name: str, public_i
     The candidate will be forced to change it on next login
     (``must_change_password`` is re-enabled by the backend)."""
     subject = f"Réinitialisation de votre mot de passe — {public_id}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -705,7 +711,7 @@ def notify_candidate_password_reset(to_email: str, candidate_name: str, public_i
 def notify_candidate_exam_unblocked(to_email: str, candidate_name: str, public_id: str, certification: str):
     """Notify a candidate that their blocked exam access has been restored."""
     subject = f"Accès à l'examen restauré — {certification}"
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 

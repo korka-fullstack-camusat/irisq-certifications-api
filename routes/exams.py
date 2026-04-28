@@ -8,7 +8,7 @@ from models.user import UserOut
 from dependencies.auth import require_role
 from bson import ObjectId
 from datetime import datetime
-from email_service import notify_candidate_exam_link
+from email_service import notify_candidate_exam_link, FRONTEND_URL
 import os
 import secrets
 import urllib.parse
@@ -160,7 +160,7 @@ async def publish_exam(
     }).to_list(1000)
 
     notified_count = 0
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    frontend_url = FRONTEND_URL
 
     for response in approved_responses:
         candidate_email = response.get("email")
