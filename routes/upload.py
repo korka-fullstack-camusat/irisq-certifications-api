@@ -44,7 +44,11 @@ async def _upload_one(fs, content: bytes, filename: str, content_type: str) -> s
                 content,
                 metadata={"content_type": content_type, "original_name": filename},
             )
-            return f"/api/files/{str(file_id)}"
+            # Embed original filename as ?n= so the frontend can detect the
+            # file type instantly without any HEAD probe round-trip.
+            from urllib.parse import quote
+            safe_name = quote(filename, safe="")
+            return f"/api/files/{str(file_id)}?n={safe_name}"
         except Exception as exc:
             last_exc = exc
             logger.warning(
@@ -130,12 +134,21 @@ async def get_file(file_id: str):
         grid_out  = await fs.open_download_stream(ObjectId(file_id))
         content   = await grid_out.read()
         content_type = "application/octet-stream"
-        if grid_out.metadata and "content_type" in grid_out.metadata:
-            content_type = grid_out.metadata["content_type"]
+        original_name = None
+        if grid_out.metadata:
+            content_type = grid_out.metadata.get("content_type", content_type)
+            original_name = grid_out.metadata.get("original_name")
+        # Use the stored filename so browsers display inline and the frontend
+        # can detect file type from Content-Disposition without an extra probe.
+        safe_name = (original_name or grid_out.filename or "fichier").replace('"', "")
         return Response(
             content=content,
             media_type=content_type,
-            headers={"Content-Length": str(len(content)), "Accept-Ranges": "bytes"},
+            headers={
+                "Content-Length": str(len(content)),
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'inline; filename="{safe_name}"',
+            },
         )
     except HTTPException:
         raise
@@ -151,12 +164,19 @@ async def head_file(file_id: str):
         fs = await ensure_fs()
         grid_out = await fs.open_download_stream(ObjectId(file_id))
         content_type = "application/octet-stream"
-        if grid_out.metadata and "content_type" in grid_out.metadata:
-            content_type = grid_out.metadata["content_type"]
+        original_name = None
+        if grid_out.metadata:
+            content_type = grid_out.metadata.get("content_type", content_type)
+            original_name = grid_out.metadata.get("original_name")
+        safe_name = (original_name or grid_out.filename or "fichier").replace('"', "")
         return Response(
             status_code=200,
             media_type=content_type,
-            headers={"Content-Length": str(grid_out.length or 0), "Accept-Ranges": "bytes"},
+            headers={
+                "Content-Length": str(grid_out.length or 0),
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'inline; filename="{safe_name}"',
+            },
         )
     except HTTPException:
         raise

@@ -1,5 +1,66 @@
-venv
-.venv
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environnement virtuel ─────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+
+# ── Variables d'environnement ─────────────────────────────
 .env
-__pycache__
-.claude/
+.env.*
+!.env.example
+
+# ── IDE ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Fichiers de test / debug ──────────────────────────────
+test.pdf
+test_exam.pdf
+check_db.py
+reset_db.py
+seed_users.py
+e2e_test.py
+fpdf_test.py
+test_*.py
+generate_test_form.py
+
+# ── Uploads locaux ────────────────────────────────────────
+uploads/
+
+# ── OS ───────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+
+# ── Coverage / tests ──────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# ── Déploiement ───────────────────────────────────────────
+.vercel/
+
+# ── Claude Code worktrees ────────────────────────────────
+.claude/worktrees/

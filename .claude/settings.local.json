@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/AROKA-TECH/IRISQ/Frontend/irisqfrontend/src/app/**)",
+      "Bash(dir \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Frontend\\\\irisqfrontend\\\\src\\\\app\")",
+      "Bash(curl -s -X POST https://irisq-certifications-api.onrender.com/api/register -H 'Content-Type: application/json' -d '{\"email\":\"comite@irisq.sn\",\"password\":\"P@sser123\",\"role\":\"COMITE\",\"full_name\":\"Comité de Validation\"}')",
+      "Bash(xargs grep *)",
+      "Read(//c/AROKA-TECH/IRISQ/Frontend/irisqfrontend/**)",
+      "Bash(npm run *)",
+      "PowerShell(Head -30)",
+      "Bash(docker exec *)",
+      "Read(//c/CAMUSAT/Codes/Projets/Rh-App/Frontend/rh-app-front/**)",
+      "Bash(npx tsc *)",
+      "Bash(docker restart *)",
+      "Bash(dir /b \"C:\\\\CAMUSAT\\\\Codes\\\\Projets\\\\Rh-App\\\\Frontend\\\\rh-app-front\\\\src\\\\pages\\\\manager\")",
+      "Bash(dir /b /s \"C:\\\\CAMUSAT\\\\Codes\\\\Projets\\\\Rh-App\\\\Frontend\\\\rh-app-front\\\\src\\\\components\\\\manager\")",
+      "Bash(dir /b /s \"C:\\\\CAMUSAT\\\\Codes\\\\Projets\\\\Rh-App\\\\Frontend\\\\rh-app-front\\\\src\\\\components\")"
+    ]
+  }
+}
