@@ -1,58 +1,72 @@
-import smtplib
+"""
+email_service.py — Envoi d'emails via l'API Brevo (ex-Sendinblue).
+Toutes les fonctions sont synchrones et peuvent être appelées
+via FastAPI background_tasks.add_task() sans problème.
+"""
+
+import httpx
 import os
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
 load_dotenv()
 
-SMTP_HOST    = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT    = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER    = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM    = os.getenv("SMTP_FROM", SMTP_USER)
-RH_EMAIL     = os.getenv("RH_EMAIL", "")
-EVALUATOR_EMAIL = os.getenv("EVALUATOR_EMAIL", "")
+# ── Configuration Brevo ──────────────────────────────────────────────────────
+BREVO_API_KEY     : str = os.getenv("BREVO_API_KEY", "")
+BREVO_API_URL     : str = "https://api.brevo.com/v3/smtp/email"
+BREVO_SENDER_NAME : str = os.getenv("BREVO_SENDER_NAME", "IRISQ Certification")
+BREVO_SENDER_EMAIL: str = os.getenv("BREVO_SENDER_EMAIL", "")
 
-# RH_EMAIL peut contenir plusieurs adresses séparées par des virgules
+# ── Destinataires fixes ──────────────────────────────────────────────────────
+RH_EMAIL        = os.getenv("RH_EMAIL", "")
+EVALUATOR_EMAIL = os.getenv("EVALUATOR_EMAIL", "")
 RH_EMAILS: list[str] = [e.strip() for e in RH_EMAIL.split(",") if e.strip()]
 
 # ── URL du frontend ──────────────────────────────────────────────────────────
-# En local  : définie dans .env  →  FRONTEND_URL=http://localhost:3000
-# En prod   : définie dans les variables d'environnement Render
-#             →  FRONTEND_URL=https://irisq-certifications.vercel.app
+# En local  : FRONTEND_URL=http://localhost:3000  (dans .env)
+# En prod   : FRONTEND_URL=https://www.irisq-certifications.online  (Render dashboard)
 FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 
-def send_email(to_email: str, subject: str, html_body: str):
-    """Send an email via Gmail SMTP. to_email peut être une adresse unique."""
-    if not SMTP_USER or not SMTP_PASSWORD or SMTP_PASSWORD == "VOTRE_MOT_DE_PASSE_APPLICATION_GOOGLE":
-        print(f"[EMAIL] SMTP non configuré — email ignoré vers {to_email}")
-        print(f"[EMAIL] Sujet: {subject}")
+# ────────────────────────────────────────────────────────────────────────────
+# Fonctions de base
+# ────────────────────────────────────────────────────────────────────────────
+
+def send_email(to_email: str, subject: str, html_body: str) -> bool:
+    """Envoie un email via l'API Brevo. Retourne True si succès."""
+    if not BREVO_API_KEY:
+        print(f"[EMAIL] BREVO_API_KEY non configuré — email ignoré vers {to_email}")
         return False
+    if not BREVO_SENDER_EMAIL:
+        print(f"[EMAIL] BREVO_SENDER_EMAIL non configuré — email ignoré vers {to_email}")
+        return False
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_body,
+    }
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"IRISQ Certification <{SMTP_FROM}>"
-        msg["To"] = to_email
-
-        msg.attach(MIMEText(html_body, "html"))
-
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
-
-        print(f"[EMAIL] Email envoyé avec succès à {to_email}")
-        return True
-    except Exception as e:
-        print(f"[EMAIL] Erreur lors de l'envoi ({to_email}): {e}")
+        response = httpx.post(BREVO_API_URL, json=payload, headers=headers, timeout=15)
+        if response.status_code in (200, 201):
+            print(f"[EMAIL] ✓ Envoyé à {to_email} — sujet : {subject}")
+            return True
+        else:
+            print(f"[EMAIL] ✗ Erreur Brevo ({response.status_code}) vers {to_email}: {response.text}")
+            return False
+    except Exception as exc:
+        print(f"[EMAIL] ✗ Exception lors de l'envoi à {to_email}: {exc}")
         return False
 
 
-def send_email_multi(to_emails: list[str], subject: str, html_body: str):
-    """Envoie le même email à plusieurs destinataires."""
+def send_email_multi(to_emails: list[str], subject: str, html_body: str) -> bool:
+    """Envoie le même email à plusieurs destinataires (un appel API par adresse)."""
     success = True
     for addr in to_emails:
         if not send_email(addr, subject, html_body):
@@ -60,10 +74,13 @@ def send_email_multi(to_emails: list[str], subject: str, html_body: str):
     return success
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Notifications métier
+# ────────────────────────────────────────────────────────────────────────────
+
 def notify_rh_new_submission(candidate_id: str, candidate_name: str, certification: str):
-    """Notify RH that a new candidate submitted a form."""
+    """Notifie l'équipe RH qu'une nouvelle candidature a été soumise."""
     subject = f"Nouvelle candidature — {candidate_id} — {certification}"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -98,7 +115,7 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
             </div>
 
             <div style="text-align: center;">
-                <a href="{frontend_url}/dashboard/forms" style="display: inline-block; background: #0f172a; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
+                <a href="{FRONTEND_URL}/dashboard" style="display: inline-block; background: #0f172a; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
                     Voir sur le Dashboard RH
                 </a>
             </div>
@@ -113,40 +130,33 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
 
 
 def notify_candidate_submission_received(to_email: str, candidate_name: str, public_id: str, certification: str, default_password: str = ""):
-    """Notify the candidate that their submission was successfully received."""
-    frontend_url = FRONTEND_URL
+    """Notifie le candidat que sa candidature a bien été reçue."""
     subject = f"Votre candidature a été envoyée — {certification}"
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 
-        <!-- Logo -->
         <div style="text-align: center; margin-bottom: 28px;">
-            <img src="{frontend_url}/logo.png" alt="IRISQ" width="72" height="72"
+            <img src="{FRONTEND_URL}/logo.png" alt="IRISQ" width="72" height="72"
                  style="border-radius: 50%; border: 3px solid #2e7d32; padding: 4px; background: white;" />
             <div style="color: #1a237e; font-weight: 800; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase; margin-top: 8px;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
 
-        <!-- Carte principale -->
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
 
-            <!-- Titre -->
             <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 12px 0;">
                 Candidature envoyée
             </h2>
 
-            <!-- Message -->
             <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 28px 0;">
                 Bonjour <strong>{candidate_name}</strong>,<br>
                 votre candidature pour <strong>{certification}</strong> a bien été reçue.<br>
                 Pour suivre l'évolution de votre dossier, connectez-vous à votre espace candidat.
             </p>
 
-            <!-- Séparateur -->
             <div style="height: 1px; background: #e2e8f0; margin-bottom: 24px;"></div>
 
-            <!-- Identifiants de connexion -->
             <p style="color: #1a237e; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 12px 0;">
                 Vos informations de connexion
             </p>
@@ -161,16 +171,14 @@ def notify_candidate_submission_received(to_email: str, candidate_name: str, pub
                 </tr>
             </table>
 
-            <!-- Bouton -->
             <div style="text-align: center; margin-top: 28px;">
-                <a href="{frontend_url}/candidat/login"
+                <a href="{FRONTEND_URL}/candidat/login"
                    style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
                     Accéder à mon espace
                 </a>
             </div>
         </div>
 
-        <!-- Footer -->
         <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 20px;">
             © IRISQ — Institut des Risques &amp; de la Qualité
         </p>
@@ -180,14 +188,10 @@ def notify_candidate_submission_received(to_email: str, candidate_name: str, pub
 
 
 def notify_candidate_status_update(to_email: str, public_id: str, status: str, certification: str, reason: str = None):
-    """Notify candidate about their application status update.
-
-    If status == "rejected" and a ``reason`` is provided, it is included in the email.
-    """
-    status_text = "Approuvée" if status == "approved" else "Refusée"
-    status_color = "#10b981" if status == "approved" else "#ef4444"
-
-    subject = f"Mise à jour de votre candidature — {public_id}"
+    """Notifie le candidat d'une mise à jour du statut de sa candidature."""
+    status_text  = "Approuvée" if status == "approved" else "Refusée"
+    status_color = "#10b981"   if status == "approved" else "#ef4444"
+    subject      = f"Mise à jour de votre candidature — {public_id}"
 
     reason_block = ""
     if status == "rejected" and reason and reason.strip():
@@ -197,7 +201,7 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
                 <p style="color: #991b1b; font-size: 14px; margin: 0; line-height: 1.6; white-space: pre-line;">{reason.strip()}</p>
             </div>
         """
-    
+
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -236,18 +240,12 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
             {reason_block}
 
             <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
-                { "Félicitations ! Votre dossier a été validé par notre équipe RH. Votre candidature est maintenant transmise au jury pour évaluation technique." if status == "approved" else "Nous avons le regret de vous informer que votre dossier n'a pas été retenu après examen par notre équipe RH. Conformément à cette décision, l'accès à votre espace candidat a été désactivé." }
+                {"Félicitations ! Votre dossier a été validé par notre équipe RH. Votre candidature est maintenant transmise au jury pour évaluation technique." if status == "approved" else "Nous avons le regret de vous informer que votre dossier n'a pas été retenu après examen par notre équipe RH. Conformément à cette décision, l'accès à votre espace candidat a été désactivé."}
             </p>
 
             <div style="background: #fff8f1; border-left: 4px solid #f97316; padding: 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
                 <p style="color: #9a3412; font-size: 14px; margin: 0; font-weight: 500;">
-                    <strong>⚠️ IMPORTANT :</strong> Veuillez conserver précieusement votre <strong>ID Public ({public_id})</strong>. Il vous sera indispensable pour la suite de votre évaluation et pour accéder à vos examens.
-                </p>
-            </div>
-
-            <div style="text-align: center; margin-top: 32px; padding-top: 24px; border-top: 1px solid #f1f5f9;">
-                <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-                    Veuillez conserver votre ID Public pour toute communication future.
+                    <strong>⚠️ IMPORTANT :</strong> Veuillez conserver précieusement votre <strong>ID Public ({public_id})</strong>. Il vous sera indispensable pour la suite de votre évaluation.
                 </p>
             </div>
         </div>
@@ -259,8 +257,9 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
     """
     send_email(to_email, subject, html_body)
 
+
 def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: str, certification: str, candidat_link: str, start_time: str = None):
-    """Notify candidate that their technical exam has been scheduled."""
+    """Notifie le candidat que son examen technique a été programmé."""
     subject = f"Convocation à l'Examen Technique — {certification}"
 
     start_time_block = ""
@@ -275,14 +274,12 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 
-        <!-- Logo -->
         <div style="text-align: center; margin-bottom: 28px;">
             <div style="color: #1a237e; font-weight: 800; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
 
-        <!-- Carte principale -->
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
 
             <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 12px 0;">
@@ -294,7 +291,6 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
                 Connectez-vous à votre espace candidat pour consulter les détails et passer l'examen.
             </p>
 
-            <!-- Infos examen -->
             <div style="background: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid #e2e8f0;">
                 <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
                     <tr>
@@ -309,7 +305,6 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
                 </table>
             </div>
 
-            <!-- Règles -->
             <div style="background: #fff1f2; border-left: 4px solid #e11d48; padding: 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
                 <h3 style="color: #be123c; font-size: 14px; margin: 0 0 8px 0; font-weight: bold;">Règles de l'examen :</h3>
                 <ul style="color: #9f1239; font-size: 13px; margin: 0; padding-left: 20px; line-height: 1.8;">
@@ -319,7 +314,6 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
                 </ul>
             </div>
 
-            <!-- Bouton -->
             <div style="text-align: center; margin-bottom: 16px;">
                 <a href="{candidat_link}" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
                     Accéder à mon espace candidat
@@ -338,11 +332,11 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
     """
     send_email(to_email, subject, html_body)
 
+
 def notify_examiner_assignment(to_email: str, candidate_id: str, certification: str):
-    """Notify an examiner that a new exam copy has been assigned to them."""
+    """Notifie un examinateur qu'une nouvelle copie lui a été assignée."""
     subject = f"Nouvelle Copie à Corriger — {candidate_id}"
-    frontend_url = FRONTEND_URL
-    
+
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -373,11 +367,11 @@ def notify_examiner_assignment(to_email: str, candidate_id: str, certification: 
             </div>
 
             <div style="text-align: center; margin-bottom: 16px;">
-                <a href="{frontend_url}/evaluateur/corrections" style="display: inline-block; background: #1a237e; color: white; padding: 14px 32px; border-radius: 10px; text-decoration: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 6px -1px rgba(26, 35, 126, 0.2);">
+                <a href="{FRONTEND_URL}/evaluateur/corrections" style="display: inline-block; background: #1a237e; color: white; padding: 14px 32px; border-radius: 10px; text-decoration: none; font-size: 16px; font-weight: 600; box-shadow: 0 4px 6px -1px rgba(26, 35, 126, 0.2);">
                     Accéder à mon Espace Corrections
                 </a>
             </div>
-            
+
             <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 32px; padding-top: 24px; border-top: 1px solid #f1f5f9;">
                 Cet email a été envoyé automatiquement par le portail d'évaluation IRISQ.
             </p>
@@ -388,9 +382,8 @@ def notify_examiner_assignment(to_email: str, candidate_id: str, certification: 
 
 
 def notify_candidate_document_issue(to_email: str, candidate_name: str, public_id: str, certification: str, document_name: str, message: str = ""):
-    """Ask the candidate to re-upload a specific document that was rejected during validation."""
+    """Demande au candidat de renvoyer un document refusé lors de la validation."""
     subject = f"Document à renvoyer — {document_name} — {public_id}"
-    frontend_url = FRONTEND_URL
     safe_message = (message or "").strip()
     extra_block = ""
     if safe_message:
@@ -437,11 +430,12 @@ def notify_candidate_document_issue(to_email: str, candidate_name: str, public_i
             {extra_block}
 
             <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
-                Merci de bien vouloir renvoyer ce document corrigé en répondant à cet email ou en reprenant contact avec notre équipe. Votre candidature restera en attente tant que le document ne sera pas validé.
+                Merci de bien vouloir renvoyer ce document corrigé en reprenant contact avec notre équipe.
+                Votre candidature restera en attente tant que le document ne sera pas validé.
             </p>
 
             <div style="text-align: center;">
-                <a href="{frontend_url}/demande-certification" style="display: inline-block; background: #0f172a; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
+                <a href="{FRONTEND_URL}/demande-certification" style="display: inline-block; background: #0f172a; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
                     Accéder au portail
                 </a>
             </div>
@@ -456,14 +450,13 @@ def notify_candidate_document_issue(to_email: str, candidate_name: str, public_i
 
 
 def notify_admin_password_reset(to_email: str, admin_name: str, new_password: str):
-    """Send a temporary password to an admin user after a forgot-password request."""
+    """Envoie un mot de passe temporaire à un administrateur après une demande de réinitialisation."""
     subject = "Réinitialisation de votre mot de passe administrateur — IRISQ"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
         <div style="text-align: center; margin-bottom: 28px;">
             <div style="color: #1a237e; font-weight: 800; font-size: 13px; letter-spacing: 0.25em; text-transform: uppercase;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
@@ -489,7 +482,7 @@ def notify_admin_password_reset(to_email: str, admin_name: str, new_password: st
                 </p>
             </div>
             <div style="text-align: center; margin-bottom: 20px;">
-                <a href="{frontend_url}/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
+                <a href="{FRONTEND_URL}/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
                     Accéder au tableau de bord
                 </a>
             </div>
@@ -509,15 +502,14 @@ def notify_admin_password_reset(to_email: str, admin_name: str, new_password: st
 
 def notify_correcteur_assignment(to_email: str, full_name: str, password: str, candidate_count: int):
     """Envoie les identifiants de connexion au correcteur lors de sa première assignation."""
-    subject = "Vos accès correcteur — IRISQ Certifications"
-    frontend_url = FRONTEND_URL
+    subject = "Vos accès correcteur — IRISQ Certification"
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
-            <img src="{frontend_url}/logo.png" alt="IRISQ" width="64" height="64"
+            <img src="{FRONTEND_URL}/logo.png" alt="IRISQ" width="64" height="64"
                  style="border-radius:50%;border:3px solid #2e7d32;padding:4px;background:white;"/>
             <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;margin-top:8px;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
         <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
@@ -544,7 +536,7 @@ def notify_correcteur_assignment(to_email: str, full_name: str, password: str, c
                 </tr>
             </table>
             <div style="text-align:center;margin-top:28px;">
-                <a href="{frontend_url}/login"
+                <a href="{FRONTEND_URL}/login"
                    style="display:inline-block;background:#1a237e;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;letter-spacing:.03em;">
                     Accéder à mon espace correcteur
                 </a>
@@ -566,18 +558,17 @@ def notify_correcteur_assignment(to_email: str, full_name: str, password: str, c
 def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: str, correcteur_email: str, candidate_count: int):
     """Notifie l'évaluateur qu'un correcteur a terminé et signé toutes ses corrections."""
     subject = f"Corrections terminées — {correcteur_name}"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
             <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
         <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
             <div style="text-align:center;margin-bottom:20px;">
                 <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#e8f5e9;border-radius:50%;">
-                    <span style="font-size:28px;">✅</span>
+                    <span style="font-size:28px;">&#10003;</span>
                 </div>
             </div>
             <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 8px;">
@@ -589,7 +580,7 @@ def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: 
                 Vous pouvez maintenant procéder à l'évaluation finale.
             </p>
             <div style="text-align:center;margin-top:24px;">
-                <a href="{frontend_url}/evaluateur/corrections"
+                <a href="{FRONTEND_URL}/evaluateur/corrections"
                    style="display:inline-block;background:#2e7d32;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
                     Voir les résultats
                 </a>
@@ -606,18 +597,17 @@ def notify_evaluateur_correction_signed(evaluateur_email: str, correcteur_name: 
 def notify_correcteur_relance(to_email: str, full_name: str, pending_count: int, evaluateur_name: str):
     """Envoie une relance au correcteur pour lui rappeler les copies en attente."""
     subject = f"Rappel — {pending_count} copie(s) en attente de correction"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
         <div style="text-align:center;margin-bottom:28px;">
             <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
         <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
             <div style="text-align:center;margin-bottom:20px;">
                 <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#fff3e0;border-radius:50%;">
-                    <span style="font-size:28px;">⏰</span>
+                    <span style="font-size:28px;">&#9201;</span>
                 </div>
             </div>
             <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 8px;">
@@ -634,7 +624,7 @@ def notify_correcteur_relance(to_email: str, full_name: str, pending_count: int,
                 </p>
             </div>
             <div style="text-align:center;">
-                <a href="{frontend_url}/login"
+                <a href="{FRONTEND_URL}/login"
                    style="display:inline-block;background:#1a237e;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
                     Accéder à mon espace correcteur
                 </a>
@@ -649,12 +639,8 @@ def notify_correcteur_relance(to_email: str, full_name: str, pending_count: int,
 
 
 def notify_candidate_password_reset(to_email: str, candidate_name: str, public_id: str, new_password: str):
-    """Send a freshly generated temporary password after a forgot-password request.
-
-    The candidate will be forced to change it on next login
-    (``must_change_password`` is re-enabled by the backend)."""
+    """Envoie un nouveau mot de passe provisoire après une demande de réinitialisation."""
     subject = f"Réinitialisation de votre mot de passe — {public_id}"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -688,7 +674,7 @@ def notify_candidate_password_reset(to_email: str, candidate_name: str, public_i
             </div>
 
             <div style="text-align: center; margin-bottom: 16px;">
-                <a href="{frontend_url}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
+                <a href="{FRONTEND_URL}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
                     Se connecter à l'espace candidat
                 </a>
             </div>
@@ -709,15 +695,14 @@ def notify_candidate_password_reset(to_email: str, candidate_name: str, public_i
 
 
 def notify_candidate_exam_unblocked(to_email: str, candidate_name: str, public_id: str, certification: str):
-    """Notify a candidate that their blocked exam access has been restored."""
+    """Notifie un candidat que son accès bloqué à l'examen a été rétabli."""
     subject = f"Accès à l'examen restauré — {certification}"
-    frontend_url = FRONTEND_URL
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 
         <div style="text-align: center; margin-bottom: 28px;">
             <div style="color: #1a237e; font-weight: 800; font-size: 12px; letter-spacing: 0.25em; text-transform: uppercase;">
-                IRISQ-CERTIFICATIONS
+                IRISQ-CERTIFICATION
             </div>
         </div>
 
@@ -753,12 +738,13 @@ def notify_candidate_exam_unblocked(to_email: str, candidate_name: str, public_i
 
             <div style="background: #fff1f2; border-left: 4px solid #e11d48; padding: 14px; border-radius: 0 8px 8px 0; margin-bottom: 24px;">
                 <p style="color: #9f1239; font-size: 13px; margin: 0; line-height: 1.6;">
-                    <strong>Attention :</strong> Un nouveau rechargement de page pendant l'examen entraînera à nouveau le verrouillage de votre accès. Assurez-vous d'avoir une connexion stable avant de commencer.
+                    <strong>Attention :</strong> Un nouveau rechargement de page pendant l'examen entraînera à nouveau le verrouillage de votre accès.
+                    Assurez-vous d'avoir une connexion stable avant de commencer.
                 </p>
             </div>
 
             <div style="text-align: center;">
-                <a href="{frontend_url}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
+                <a href="{FRONTEND_URL}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700;">
                     Accéder à mon espace candidat
                 </a>
             </div>
