@@ -292,8 +292,24 @@ async def candidate_change_password(
 
 @router.get("/me")
 async def candidate_me(candidate=Depends(get_current_candidate)):
-    """Retourne le dossier du candidat connecté."""
-    return _serialize_response(candidate)
+    """Retourne le dossier actif + tous les dossiers du même public_id (multi-formations)."""
+    db = get_database()
+    public_id = candidate.get("public_id")
+
+    # Récupérer tous les dossiers liés au même public_id
+    if public_id:
+        all_docs = await db["responses"].find({"public_id": public_id}).to_list(20)
+        # Trier : approved en premier, puis pending, puis rejected
+        STATUS_PRIORITY = {"approved": 0, "pending": 1, "rejected": 2}
+        all_docs.sort(key=lambda d: STATUS_PRIORITY.get(d.get("status", ""), 99))
+        dossiers = [_serialize_response(d) for d in all_docs]
+    else:
+        dossiers = [_serialize_response(candidate)]
+
+    # Le dossier actif = celui du token (ou le premier par priorité)
+    active = _serialize_response(candidate)
+
+    return {**active, "dossiers": dossiers}
 
 
 @router.get("/exam")
