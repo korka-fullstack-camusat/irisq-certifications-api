@@ -55,13 +55,13 @@ def send_email(to_email: str, subject: str, html_body: str) -> bool:
     try:
         response = httpx.post(BREVO_API_URL, json=payload, headers=headers, timeout=15)
         if response.status_code in (200, 201):
-            print(f"[EMAIL] ✓ Envoyé à {to_email} — sujet : {subject}")
+            print(f"[EMAIL] OK Envoye a {to_email} - sujet : {subject}")
             return True
         else:
-            print(f"[EMAIL] ✗ Erreur Brevo ({response.status_code}) vers {to_email}: {response.text}")
+            print(f"[EMAIL] ERREUR Brevo ({response.status_code}) vers {to_email}: {response.text}")
             return False
     except Exception as exc:
-        print(f"[EMAIL] ✗ Exception lors de l'envoi à {to_email}: {exc}")
+        print(f"[EMAIL] EXCEPTION lors de l'envoi a {to_email}: {exc}")
         return False
 
 

@@ -148,12 +148,22 @@ async def candidate_login(payload: CandidateLoginIn = Body(...)):
     if not public_id or not payload.password:
         raise HTTPException(status_code=400, detail="ID public et mot de passe requis")
 
-    response = await db["responses"].find_one({"public_id": public_id})
-    if not response:
+    # Récupérer TOUS les documents ayant ce public_id (cas multi-candidatures)
+    all_responses = await db["responses"].find({"public_id": public_id}).to_list(20)
+    if not all_responses:
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
-    password_hash = response.get("password_hash")
-    if not password_hash or not verify_password(payload.password, password_hash):
+    # Chercher tous les documents dont le mot de passe correspond
+    # Prioriser : approved > pending > rejected (pour les multi-formations)
+    STATUS_PRIORITY = {"approved": 0, "pending": 1, "rejected": 2}
+    matching = [
+        doc for doc in all_responses
+        if doc.get("password_hash") and verify_password(payload.password, doc.get("password_hash"))
+    ]
+    matching.sort(key=lambda d: STATUS_PRIORITY.get(d.get("status", ""), 99))
+    response = matching[0] if matching else None
+
+    if not response:
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
     if response.get("credentials_blocked"):
@@ -194,29 +204,40 @@ async def candidate_forgot_password(
     if not public_id or not email:
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
-    response = await db["responses"].find_one({"public_id": public_id})
-    if not response:
+    # Récupérer TOUS les documents ayant ce public_id (cas multi-candidatures)
+    all_responses = await db["responses"].find({"public_id": public_id}).to_list(20)
+    if not all_responses:
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
-    stored_email = (response.get("email") or "").strip().lower()
-    if not stored_email or stored_email != email:
+    # Vérifier que l'email correspond à au moins un document
+    matching = [
+        r for r in all_responses
+        if (r.get("email") or "").strip().lower() == email
+    ]
+    if not matching:
         return CandidateForgotPasswordOut(message=_GENERIC_FORGOT_MESSAGE)
 
-    if response.get("credentials_blocked"):
+    # Vérifier qu'aucun n'est bloqué (si tous bloqués → refus)
+    if all(r.get("credentials_blocked") for r in matching):
         raise HTTPException(
             status_code=403,
             detail="Votre candidature a été rejetée. Vos identifiants ont été désactivés.",
         )
 
+    # Générer UN seul mot de passe et l'appliquer à TOUS les dossiers du même public_id
+    # (évite toute ambiguïté pour les candidats multi-formations)
     new_password = secrets.token_urlsafe(6)[:8]
-    await db["responses"].update_one(
-        {"_id": response["_id"]},
+    new_hash = get_password_hash(new_password)
+    await db["responses"].update_many(
+        {"public_id": public_id},
         {"$set": {
-            "password_hash": get_password_hash(new_password),
+            "password_hash": new_hash,
             "must_change_password": True,
             "password_reset_at": datetime.utcnow(),
         }},
     )
+
+    response = matching[0]
 
     # Send the email in the background — response returns immediately
     background_tasks.add_task(
@@ -247,8 +268,11 @@ async def candidate_change_password(
 
     db = get_database()
     new_hash = get_password_hash(payload.new_password)
-    await db["responses"].update_one(
-        {"_id": candidate["_id"]},
+    public_id = candidate.get("public_id")
+    # Synchroniser le mot de passe sur TOUS les dossiers du même public_id
+    # (cas multi-formations : un seul mot de passe pour tous les dossiers)
+    await db["responses"].update_many(
+        {"public_id": public_id} if public_id else {"_id": candidate["_id"]},
         {"$set": {
             "password_hash": new_hash,
             "must_change_password": False,
