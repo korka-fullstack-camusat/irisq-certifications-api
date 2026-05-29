@@ -105,9 +105,14 @@ class CandidateForgotPasswordOut(BaseModel):
     message: str
 
 
-def create_candidate_token(response_id: str) -> str:
+def create_candidate_token(response_id: str, session_token: str) -> str:
     expire = datetime.utcnow() + timedelta(days=CANDIDATE_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": response_id, "aud": CANDIDATE_TOKEN_AUDIENCE, "exp": expire}
+    payload = {
+        "sub": response_id,
+        "aud": CANDIDATE_TOKEN_AUDIENCE,
+        "exp": expire,
+        "sid": session_token,   # session unique — invalide les autres appareils
+    }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -138,6 +143,19 @@ async def get_current_candidate(token: Optional[str] = Depends(_candidate_scheme
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Votre accès a été désactivé suite au refus de votre candidature.",
         )
+
+    # Vérification de session unique : si le JWT contient un sid, il doit
+    # correspondre à celui stocké en DB. Une connexion sur un autre appareil
+    # met à jour le sid en DB et invalide donc cette session.
+    jwt_sid = payload.get("sid")
+    db_sid = response.get("session_token")
+    if jwt_sid and db_sid and jwt_sid != db_sid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="SESSION_INVALIDEE",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return response
 
 
@@ -173,7 +191,17 @@ async def candidate_login(payload: CandidateLoginIn = Body(...)):
         )
 
     response_id = str(response["_id"])
-    token = create_candidate_token(response_id)
+    public_id = response.get("public_id")
+
+    # Générer un nouveau session_token et le synchroniser sur tous les dossiers
+    # du même public_id → invalide toutes les sessions actives sur d'autres appareils.
+    new_sid = secrets.token_hex(32)
+    await db["responses"].update_many(
+        {"public_id": public_id} if public_id else {"_id": response["_id"]},
+        {"$set": {"session_token": new_sid, "last_login": datetime.utcnow()}},
+    )
+
+    token = create_candidate_token(response_id, new_sid)
     return CandidateLoginOut(
         access_token=token,
         response_id=response_id,
@@ -269,20 +297,23 @@ async def candidate_change_password(
     db = get_database()
     new_hash = get_password_hash(payload.new_password)
     public_id = candidate.get("public_id")
-    # Synchroniser le mot de passe sur TOUS les dossiers du même public_id
-    # (cas multi-formations : un seul mot de passe pour tous les dossiers)
+
+    # Nouveau session_token → invalide toutes les autres sessions (autres appareils)
+    new_sid = secrets.token_hex(32)
+
+    # Synchroniser mot de passe + session_token sur TOUS les dossiers du même public_id
     await db["responses"].update_many(
         {"public_id": public_id} if public_id else {"_id": candidate["_id"]},
         {"$set": {
             "password_hash": new_hash,
             "must_change_password": False,
             "password_changed_at": datetime.utcnow(),
+            "session_token": new_sid,
         }},
     )
 
-    # Rotate the token to invalidate any session tied to the old password state.
     response_id = str(candidate["_id"])
-    token = create_candidate_token(response_id)
+    token = create_candidate_token(response_id, new_sid)
     return CandidateLoginOut(
         access_token=token,
         response_id=response_id,
