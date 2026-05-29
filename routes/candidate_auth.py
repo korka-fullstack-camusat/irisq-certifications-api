@@ -217,8 +217,8 @@ _GENERIC_FORGOT_MESSAGE = (
 
 @router.post("/forgot-password", response_model=CandidateForgotPasswordOut)
 async def candidate_forgot_password(
+    background_tasks: BackgroundTasks,
     payload: CandidateForgotPasswordIn = Body(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Generate a fresh temporary password and email it to the candidate.
 
@@ -266,6 +266,8 @@ async def candidate_forgot_password(
     )
 
     response = matching[0]
+    # Utiliser l'email stocké en DB (identique à `email` après vérification ci-dessus)
+    stored_email = (response.get("email") or email).strip()
 
     # Send the email in the background — response returns immediately
     background_tasks.add_task(
