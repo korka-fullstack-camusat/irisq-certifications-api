@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Body, Depends, BackgroundTasks, Query
+from pydantic import BaseModel
 from typing import List, Optional
 import re
 from database import get_database
