@@ -8,7 +8,7 @@ class ExamBase(BaseModel):
     document_url: str
     duration_minutes: Optional[int] = None
     session_id: Optional[str] = None
-    start_time: Optional[str] = None          # ISO 8601 datetime string
+    deadline: Optional[str] = None            # Date limite de dépôt (YYYY-MM-DD)
 
 class ExamCreate(ExamBase):
     pass

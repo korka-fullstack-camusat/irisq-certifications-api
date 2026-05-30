@@ -179,7 +179,7 @@ async def publish_exam(
             )
 
         candidat_link = f"{frontend_url}/candidat/login"
-        start_time = exam.get("start_time")
+        deadline = exam.get("deadline")
 
         if candidate_email:
             # Queue each email as a background task — the loop returns immediately
@@ -190,7 +190,7 @@ async def publish_exam(
                 candidate_name=full_name,
                 certification=certification_name,
                 candidat_link=candidat_link,
-                start_time=start_time,
+                deadline=deadline,
             )
             notified_count += 1
 

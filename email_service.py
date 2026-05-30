@@ -258,16 +258,23 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
     send_email(to_email, subject, html_body)
 
 
-def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: str, certification: str, candidat_link: str, start_time: str = None):
-    """Notifie le candidat que son examen technique a été programmé."""
+def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: str, certification: str, candidat_link: str, deadline: str = None):
+    """Notifie le candidat que son examen technique est disponible."""
     subject = f"Convocation à l'Examen Technique — {certification}"
 
-    start_time_block = ""
-    if start_time:
-        start_time_block = f"""
+    deadline_block = ""
+    if deadline:
+        # Formater la date en français si possible
+        try:
+            from datetime import datetime as _dt
+            d = _dt.strptime(deadline, "%Y-%m-%d")
+            deadline_fr = d.strftime("%d/%m/%Y")
+        except Exception:
+            deadline_fr = deadline
+        deadline_block = f"""
             <tr>
-                <td style="padding: 8px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Début de l'épreuve</td>
-                <td style="padding: 8px 0; color: #1a237e; text-align: right; border-top: 1px solid #e2e8f0; font-weight: 700;">{start_time}</td>
+                <td style="padding: 8px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Date limite de dépôt</td>
+                <td style="padding: 8px 0; color: #c62828; text-align: right; border-top: 1px solid #e2e8f0; font-weight: 700;">{deadline_fr}</td>
             </tr>
         """
 
@@ -301,8 +308,15 @@ def notify_candidate_exam_link(to_email: str, public_id: str, candidate_name: st
                         <td style="padding: 8px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Certification</td>
                         <td style="padding: 8px 0; color: #0f172a; text-align: right; border-top: 1px solid #e2e8f0; font-weight: 700;">{certification}</td>
                     </tr>
-                    {start_time_block}
+                    {deadline_block}
                 </table>
+            </div>
+
+            <div style="background: #fff8e1; border-left: 4px solid #f59e0b; padding: 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
+                <p style="color: #92400e; font-size: 14px; margin: 0; font-weight: 600;">
+                    Vous pouvez passer l'examen à votre convenance depuis votre espace candidat,
+                    avant la date limite indiquée ci-dessus.
+                </p>
             </div>
 
             <div style="background: #fff1f2; border-left: 4px solid #e11d48; padding: 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
