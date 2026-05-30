@@ -347,7 +347,7 @@ async def candidate_me(candidate=Depends(get_current_candidate)):
 
 @router.get("/exam")
 async def candidate_exam(candidate=Depends(get_current_candidate)):
-    """Retourne le dernier examen publié pour la certification du candidat."""
+    """Retourne le dernier examen publié pour la certification du candidat (dossier actif)."""
     certification = (candidate.get("answers") or {}).get("Certification souhaitée")
     if not certification:
         return None
@@ -358,6 +358,43 @@ async def candidate_exam(candidate=Depends(get_current_candidate)):
     if not exams:
         return None
     return _serialize_exam(exams[0])
+
+
+@router.get("/exams-all")
+async def candidate_exams_all(candidate=Depends(get_current_candidate)):
+    """Retourne le dernier examen pour chaque certification du candidat (multi-formations).
+
+    Utilisé par le tableau de bord pour afficher une notification par candidature :
+    - examen disponible, déjà soumis, corrigé ou délai expiré.
+    """
+    db = get_database()
+    public_id = candidate.get("public_id")
+
+    # Récupérer tous les dossiers liés à ce compte
+    if public_id:
+        all_docs = await db["responses"].find({"public_id": public_id}).to_list(20)
+    else:
+        all_docs = [candidate]
+
+    # Certifications uniques (dans l'ordre des dossiers)
+    seen: set = set()
+    certifications: list = []
+    for doc in all_docs:
+        cert = (doc.get("answers") or {}).get("Certification souhaitée")
+        if cert and cert not in seen:
+            seen.add(cert)
+            certifications.append(cert)
+
+    # Pour chaque certification, récupérer le dernier examen
+    result = []
+    for cert in certifications:
+        exams = await db["exams"].find(
+            {"certification": cert}
+        ).sort("created_at", -1).limit(1).to_list(1)
+        if exams:
+            result.append(_serialize_exam(exams[0]))
+
+    return result
 
 
 class ReportBlockedIn(BaseModel):
