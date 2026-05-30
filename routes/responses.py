@@ -904,3 +904,68 @@ async def request_document_resubmit(
     )
 
     return {"status": "email_sent", "document_name": payload.document_name}
+
+
+# ── Changement de certification par l'admin ──────────────────────────────────
+
+class ChangeCertificationIn(BaseModel):
+    certification: str
+
+
+@router.patch("/responses/{id}/certification", response_description="Change the candidate's target certification")
+async def change_certification(
+    id: str,
+    payload: ChangeCertificationIn = Body(...),
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
+    """
+    Permet à un RH / évaluateur de changer la certification cible d'un candidat
+    (ex. : après un entretien téléphonique révélant un niveau supérieur).
+
+    Met à jour :
+      - answers["Certification souhaitée"]
+      - Réinitialise exam_status, exam_token, exam_grade pour le nouveau parcours
+    La modification est immédiatement visible côté candidat.
+    """
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="ID invalide")
+
+    new_cert = payload.certification.strip()
+    if not new_cert:
+        raise HTTPException(status_code=400, detail="La certification ne peut pas être vide")
+
+    response_doc = await db["responses"].find_one({"_id": ObjectId(id)})
+    if not response_doc:
+        raise HTTPException(status_code=404, detail=f"Dossier {id} introuvable")
+
+    old_cert = (response_doc.get("answers") or {}).get("Certification souhaitée", "—")
+
+    # Mise à jour de la certification + réinitialisation du parcours examen
+    await db["responses"].update_one(
+        {"_id": ObjectId(id)},
+        {"$set": {
+            "answers.Certification souhaitée": new_cert,
+            "exam_token": None,
+            "exam_status": None,
+            "exam_grade": None,
+            "exam_appreciation": None,
+            "exam_blocked": None,
+            "updated_at": datetime.utcnow(),
+        }},
+    )
+
+    updated = await db["responses"].find_one({"_id": ObjectId(id)})
+
+    await log_action(
+        action="certification_changed",
+        resource_type="response",
+        resource_id=id,
+        user_email=current_user.email,
+        user_role=current_user.role,
+        user_name=current_user.full_name,
+        resource_label=updated.get("public_id", id),
+        details={"old_certification": old_cert, "new_certification": new_cert},
+    )
+
+    return serialize_doc(updated, user_role=current_user.role)

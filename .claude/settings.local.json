@@ -103,7 +103,9 @@
       "Bash(dir /s /b \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Frontend\\\\irisqfrontend\\\\src\\\\app\\\\dashboard\\\\*.tsx\")",
       "Bash(pip show *)",
       "Bash(cat requirements.txt)",
-      "Bash(cat requirements*.txt)"
+      "Bash(cat requirements*.txt)",
+      "Bash(npx next *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('scripts',{}\\)\\)\")"
     ]
   }
 }
