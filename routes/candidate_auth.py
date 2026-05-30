@@ -67,6 +67,7 @@ def _serialize_exam(doc: dict) -> dict:
         "duration_minutes": doc.get("duration_minutes"),
         "deadline": doc.get("deadline"),           # Date limite de dépôt (YYYY-MM-DD)
         "session_id": doc.get("session_id"),
+        "document_url": doc.get("document_url"),   # URL du fichier sujet (PDF/DOCX)
         "created_at": doc.get("created_at").isoformat() if hasattr(doc.get("created_at"), "isoformat") else doc.get("created_at"),
         "parsed_questions": doc.get("parsed_questions", []),
     }
