@@ -1,113 +1,351 @@
+"""
+parser_service.py — Conversion universelle de documents → HTML + extraction de questions.
+
+Formats supportés :
+  • DOCX / DOC  → HTML fidèle (titres, gras/italique/souligné, listes ol/ul imbriquées,
+                               tableaux, images base64, couleurs, alignement)
+  • PDF         → HTML (texte extrait ligne par ligne, préservation de l'ordre)
+  • TXT         → HTML (balise <pre> avec police monospace)
+  • Autres      → chaîne vide (le frontend affichera un bouton de téléchargement)
+"""
+
+import base64
 import os
 import re
 import uuid
+
 import pdfplumber
 from docx import Document
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Conversion DOCX → HTML (fidèle au document original)
+# Utilitaires communs
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _escape(text: str) -> str:
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Échappe les caractères spéciaux HTML."""
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
-def _runs_to_html(paragraph) -> str:
-    """Convertit les runs d'un paragraphe en HTML inline (gras, italique, souligné)."""
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCX → HTML
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Namespaces XML utilisés dans les fichiers OOXML
+_W   = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_A   = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_R   = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+_WP  = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+
+
+def _build_image_cache(doc) -> dict:
+    """
+    Construit un dictionnaire rId → data-URI base64
+    à partir des relations de la partie document principale.
+    """
+    cache: dict = {}
+    try:
+        for rId, rel in doc.part.rels.items():
+            if "image" in (rel.reltype or "").lower():
+                try:
+                    part   = rel.target_part
+                    b64    = base64.b64encode(part.blob).decode("utf-8")
+                    ct     = part.content_type or "image/png"
+                    cache[rId] = f"data:{ct};base64,{b64}"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return cache
+
+
+def _extract_images(element, image_cache: dict) -> list:
+    """
+    Retourne la liste des balises <img> pour toutes les images
+    référencées dans un élément XML (drawing / inline / anchor).
+    """
+    imgs = []
+    # Recherche de tous les blip (références d'image DrawingML)
+    blip_tag = f"{{{_A}}}blip"
+    for blip in element.iter(blip_tag):
+        rId = blip.get(f"{{{_R}}}embed")
+        if rId and rId in image_cache:
+            src = image_cache[rId]
+            imgs.append(
+                f'<img src="{src}" '
+                f'style="max-width:100%;height:auto;display:block;margin:8px 0;'
+                f'border-radius:4px" alt="image"/>'
+            )
+    return imgs
+
+
+def _run_to_html(run, image_cache: dict) -> str:
+    """Convertit un run DOCX en HTML (texte + images inline)."""
     html = ""
-    for run in paragraph.runs:
-        t = _escape(run.text)
-        if not t:
-            continue
-        if run.bold:
-            t = f"<strong>{t}</strong>"
-        if run.italic:
-            t = f"<em>{t}</em>"
-        if run.underline:
-            t = f"<u>{t}</u>"
-        html += t
+
+    # Vérifier s'il y a des images dans ce run
+    imgs = _extract_images(run._r, image_cache)
+    html += "".join(imgs)
+
+    # Texte
+    t = run.text
+    if not t:
+        return html
+
+    t = _escape(t)
+
+    # Couleur du texte (si définie et non noire)
+    color = None
+    try:
+        if run.font and run.font.color and run.font.color.rgb:
+            c = str(run.font.color.rgb).lower()
+            if c not in ("000000", "auto"):
+                color = f"#{c}"
+    except Exception:
+        pass
+
+    # Mise en forme
+    if run.bold:
+        t = f"<strong>{t}</strong>"
+    if run.italic:
+        t = f"<em>{t}</em>"
+    if run.underline:
+        t = f"<u>{t}</u>"
+    if color:
+        t = f'<span style="color:{color}">{t}</span>'
+
+    html += t
     return html
 
 
-def _paragraph_to_html(para) -> str:
-    """Convertit un paragraphe DOCX en balise HTML selon son style."""
+def _get_list_info(para) -> dict | None:
+    """
+    Retourne les infos de liste d'un paragraphe (niveau, type) ou None.
+    """
+    try:
+        pPr = para._p.find(f"{{{_W}}}pPr")
+        if pPr is None:
+            return None
+        numPr = pPr.find(f"{{{_W}}}numPr")
+        if numPr is None:
+            return None
+
+        ilvl_el = numPr.find(f"{{{_W}}}ilvl")
+        numId_el = numPr.find(f"{{{_W}}}numId")
+        ilvl  = int(ilvl_el.get(f"{{{_W}}}val", 0)) if ilvl_el is not None else 0
+        numId = int(numId_el.get(f"{{{_W}}}val", 0)) if numId_el is not None else 0
+
+        if numId == 0:
+            return None
+
+        # Déterminer bullet vs numéroté via le style ou le numbering.xml
+        style_name = (para.style.name or "").lower()
+        is_bullet = "bullet" in style_name or "puce" in style_name
+
+        # Essayer de lire le format depuis numbering.xml
+        try:
+            numbering_part = para.part.numbering_part
+            if numbering_part is not None:
+                num_el = numbering_part._element.find(
+                    f".//{{{_W}}}num[@{{{_W}}}numId='{numId}']"
+                )
+                if num_el is not None:
+                    abstractNumId_el = num_el.find(f"{{{_W}}}abstractNumId")
+                    if abstractNumId_el is not None:
+                        abId = abstractNumId_el.get(f"{{{_W}}}val")
+                        abstract_el = numbering_part._element.find(
+                            f".//{{{_W}}}abstractNum[@{{{_W}}}abstractNumId='{abId}']"
+                        )
+                        if abstract_el is not None:
+                            lvl_el = abstract_el.find(
+                                f".//{{{_W}}}lvl[@{{{_W}}}ilvl='{ilvl}']"
+                            )
+                            if lvl_el is not None:
+                                numFmt_el = lvl_el.find(f"{{{_W}}}numFmt")
+                                if numFmt_el is not None:
+                                    fmt = numFmt_el.get(f"{{{_W}}}val", "")
+                                    is_bullet = fmt in ("bullet", "none", "")
+        except Exception:
+            pass
+
+        return {"level": ilvl, "numId": numId, "bullet": is_bullet}
+    except Exception:
+        return None
+
+
+def _para_to_html(para, image_cache: dict) -> str:
+    """Convertit un paragraphe DOCX complet en HTML."""
     style_name = (para.style.name or "") if para.style else ""
-    inner = _runs_to_html(para)
 
-    # Ligne vide → espace
-    if not inner.strip():
-        return "<p>&nbsp;</p>"
+    # Extraire texte + images inline
+    inner = "".join(_run_to_html(r, image_cache) for r in para.runs)
 
-    # Titres
-    if "Heading 1" in style_name or "Titre 1" in style_name:
-        return f"<h2 style='font-size:1.2em;font-weight:800;margin:1em 0 0.4em;color:#1a237e'>{inner}</h2>"
-    if "Heading 2" in style_name or "Titre 2" in style_name:
-        return f"<h3 style='font-size:1.05em;font-weight:700;margin:0.9em 0 0.3em;color:#1a237e'>{inner}</h3>"
-    if "Heading 3" in style_name or "Titre 3" in style_name:
-        return f"<h4 style='font-size:1em;font-weight:700;margin:0.8em 0 0.25em'>{inner}</h4>"
+    # Images flottantes/block dans le paragraphe
+    block_imgs = _extract_images(para._p, image_cache)
+    imgs_html  = "".join(block_imgs)
 
-    # Listes
-    if "List" in style_name or "Puce" in style_name:
-        return f"<li style='margin:0.2em 0'>{inner}</li>"
+    # Alignement
+    align = ""
+    try:
+        fmt = para.paragraph_format
+        if fmt.alignment is not None:
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            if fmt.alignment == WD_ALIGN_PARAGRAPH.CENTER:
+                align = "text-align:center;"
+            elif fmt.alignment == WD_ALIGN_PARAGRAPH.RIGHT:
+                align = "text-align:right;"
+            elif fmt.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY:
+                align = "text-align:justify;"
+    except Exception:
+        pass
 
-    # Paragraphe normal
-    return f"<p style='margin:0.4em 0;line-height:1.6'>{inner}</p>"
+    # Ligne vide
+    if not inner.strip() and not imgs_html:
+        return "<p style='margin:2px 0'>&nbsp;</p>"
+
+    # Uniquement des images (pas de texte)
+    if not inner.strip() and imgs_html:
+        return imgs_html
+
+    # ── Titres ──────────────────────────────────────────────────────────────
+    base_style = (
+        "font-weight:800;margin:1em 0 0.4em;color:#1a237e;"
+        f"line-height:1.3;{align}"
+    )
+    if any(k in style_name for k in ("Heading 1", "Titre 1", "Title")):
+        return f"<h2 style='font-size:1.25em;{base_style}'>{inner}</h2>{imgs_html}"
+    if any(k in style_name for k in ("Heading 2", "Titre 2", "Subtitle")):
+        return f"<h3 style='font-size:1.1em;{base_style}'>{inner}</h3>{imgs_html}"
+    if any(k in style_name for k in ("Heading 3", "Titre 3")):
+        return f"<h4 style='font-size:1em;{base_style}color:#283593'>{inner}</h4>{imgs_html}"
+    if any(k in style_name for k in ("Heading 4", "Titre 4")):
+        return f"<h5 style='font-size:0.95em;{base_style}color:#283593'>{inner}</h5>{imgs_html}"
+
+    # ── Listes via numPr XML ─────────────────────────────────────────────────
+    list_info = _get_list_info(para)
+    if list_info:
+        indent = list_info["level"] * 18
+        bullet = "•" if list_info["bullet"] else ""
+        marker = f'<span style="margin-right:6px">{bullet}</span>' if bullet else ""
+        return (
+            f"<div style='display:flex;align-items:baseline;margin:2px 0;"
+            f"padding-left:{indent}px'>"
+            f"{marker}"
+            f"<span style='flex:1;{align}'>{inner}</span>"
+            f"</div>{imgs_html}"
+        )
+
+    # ── Listes via nom de style ──────────────────────────────────────────────
+    if any(k in style_name for k in ("List Bullet", "Puce")):
+        return (
+            f"<div style='display:flex;align-items:baseline;margin:2px 0;padding-left:16px'>"
+            f"<span style='margin-right:6px'>•</span>"
+            f"<span style='flex:1;{align}'>{inner}</span>"
+            f"</div>{imgs_html}"
+        )
+    if any(k in style_name for k in ("List Number", "Numérotée")):
+        return (
+            f"<div style='display:flex;align-items:baseline;margin:2px 0;padding-left:16px'>"
+            f"<span style='margin-right:6px'>◦</span>"
+            f"<span style='flex:1;{align}'>{inner}</span>"
+            f"</div>{imgs_html}"
+        )
+
+    # ── Paragraphe normal ────────────────────────────────────────────────────
+    return (
+        f"<p style='margin:0.35em 0;line-height:1.65;{align}'>{inner}</p>"
+        f"{imgs_html}"
+    )
 
 
-def _table_to_html(table) -> str:
-    """Convertit un tableau DOCX en tableau HTML."""
+def _table_to_html(table, image_cache: dict) -> str:
+    """Convertit un tableau DOCX en tableau HTML avec fusion de cellules."""
     rows_html = []
     for row_idx, row in enumerate(table.rows):
         cells_html = []
         for cell in row.cells:
-            # Contenu de la cellule = plusieurs paragraphes possibles
-            cell_content = "".join(_paragraph_to_html(p) for p in cell.paragraphs)
-            tag = "th" if row_idx == 0 else "td"
-            style = (
-                "padding:6px 10px;border:1px solid #ccc;font-weight:700;background:#f4f6f9"
-                if row_idx == 0
-                else "padding:6px 10px;border:1px solid #e0e0e0"
-            )
+            # Contenu de la cellule (plusieurs paragraphes + sous-tableaux)
+            cell_content = ""
+            for child in cell._tc.iterchildren():
+                local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                if local == "p":
+                    from docx.text.paragraph import Paragraph as P
+                    cell_content += _para_to_html(P(child, cell), image_cache)
+                elif local == "tbl":
+                    from docx.table import Table as T
+                    cell_content += _table_to_html(T(child, cell), image_cache)
+
+            if row_idx == 0:
+                style = (
+                    "padding:7px 10px;border:1px solid #c5cae9;"
+                    "font-weight:700;background:#e8eaf6;color:#1a237e;vertical-align:top"
+                )
+                tag = "th"
+            else:
+                style = (
+                    "padding:6px 10px;border:1px solid #e0e0e0;"
+                    "vertical-align:top;background:#fff"
+                )
+                tag = "td"
+
             cells_html.append(f"<{tag} style='{style}'>{cell_content}</{tag}>")
+
         rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
+
     return (
-        "<table style='border-collapse:collapse;width:100%;margin:0.8em 0'>"
+        "<div style='overflow-x:auto;margin:0.8em 0'>"
+        "<table style='border-collapse:collapse;width:100%;font-size:0.88em'>"
         + "".join(rows_html)
-        + "</table>"
+        + "</table></div>"
     )
 
 
 def docx_to_html(file_path: str) -> str:
     """
-    Convertit un fichier DOCX en HTML en préservant :
-    - Titres (Heading 1-3)
-    - Gras, italique, souligné
-    - Listes (List Bullet / List Number)
-    - Tableaux
-    - Ordre original paragraphes + tableaux
+    Convertit un fichier DOCX en HTML complet et fidèle.
+
+    Supporte :
+    - Titres Heading 1-4 (styles FR et EN)
+    - Gras, italique, souligné, couleurs de texte
+    - Listes à puces et numérotées (imbriquées)
+    - Tableaux (y compris imbriqués)
+    - Images inline et flottantes (encodées en base64)
+    - Alignement (centre, droite, justifié)
+    - Ordre original paragraphes + tableaux préservé
     """
     try:
-        from docx.oxml.ns import qn
-        from docx.table import Table
+        from docx.table import Table as DocxTable
         from docx.text.paragraph import Paragraph as DocxParagraph
 
-        doc = Document(file_path)
+        doc         = Document(file_path)
+        image_cache = _build_image_cache(doc)
+
         parts = [
             "<div style='font-family:inherit;font-size:0.9em;line-height:1.7;"
-            "color:#1a1a2e;padding:4px 0'>"
+            "color:#1a1a2e;padding:4px 2px'>"
         ]
 
         for child in doc.element.body.iterchildren():
-            local_tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
 
-            if local_tag == "p":
+            if local == "p":
                 para = DocxParagraph(child, doc)
-                parts.append(_paragraph_to_html(para))
+                parts.append(_para_to_html(para, image_cache))
 
-            elif local_tag == "tbl":
-                table = Table(child, doc)
-                parts.append(_table_to_html(table))
+            elif local == "tbl":
+                table = DocxTable(child, doc)
+                parts.append(_table_to_html(table, image_cache))
+
+            # Saut de page → ligne de séparation visuelle
+            elif local == "sectPr":
+                parts.append("<hr style='border:none;border-top:1px solid #e0e0e0;margin:12px 0'/>")
 
         parts.append("</div>")
         return "".join(parts)
@@ -117,19 +355,36 @@ def docx_to_html(file_path: str) -> str:
         return ""
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PDF → HTML  (extraction texte + structure basique)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def pdf_to_html(file_path: str) -> str:
-    """Extrait le texte d'un PDF et le retourne sous forme de HTML basique."""
+    """
+    Extrait le texte d'un PDF page par page et le retourne en HTML.
+    Les PDFs sont aussi affichables via iframe natif — ce fallback
+    sert uniquement si l'iframe n'est pas disponible.
+    """
     try:
-        parts = ["<div style='font-family:inherit;font-size:0.9em;line-height:1.7;color:#1a1a2e'>"]
+        parts = [
+            "<div style='font-family:inherit;font-size:0.9em;line-height:1.7;"
+            "color:#1a1a2e;padding:4px 2px'>"
+        ]
         with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
+            for page_num, page in enumerate(pdf.pages, 1):
+                if len(pdf.pages) > 1:
+                    parts.append(
+                        f"<p style='font-size:0.7em;font-weight:700;color:#9e9e9e;"
+                        f"text-transform:uppercase;letter-spacing:0.1em;"
+                        f"margin:12px 0 4px'>— Page {page_num} —</p>"
+                    )
                 text = page.extract_text() or ""
                 for line in text.split("\n"):
-                    escaped = _escape(line)
-                    if escaped.strip():
-                        parts.append(f"<p style='margin:0.3em 0'>{escaped}</p>")
+                    esc = _escape(line)
+                    if esc.strip():
+                        parts.append(f"<p style='margin:0.25em 0'>{esc}</p>")
                     else:
-                        parts.append("<p>&nbsp;</p>")
+                        parts.append("<p style='margin:2px 0'>&nbsp;</p>")
         parts.append("</div>")
         return "".join(parts)
     except Exception as e:
@@ -138,13 +393,63 @@ def pdf_to_html(file_path: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parseur de questions (mode interactif — format numéroté)
+# TXT → HTML
+# ─────────────────────────────────────────────────────────────────────────────
+
+def txt_to_html(file_path: str) -> str:
+    """Convertit un fichier texte brut en HTML."""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = _escape(f.read())
+        return (
+            f"<div style='font-family:monospace;font-size:0.88em;line-height:1.6;"
+            f"color:#1a1a2e;white-space:pre-wrap;padding:4px 2px'>{content}</div>"
+        )
+    except Exception as e:
+        print(f"[txt_to_html] Erreur : {e}")
+        return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Convertisseur universel (point d'entrée principal)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def document_to_html(file_path: str) -> str:
+    """
+    Convertit n'importe quel document supporté en HTML.
+
+    Dispatche selon l'extension :
+      .docx / .doc  → docx_to_html()   (rendu complet avec images)
+      .pdf          → pdf_to_html()     (extraction texte page par page)
+      .txt          → txt_to_html()     (pre-wrap monospace)
+      autres        → ""               (le frontend affichera un lien de téléchargement)
+    """
+    if not os.path.exists(file_path):
+        return ""
+
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext in (".docx", ".doc"):
+        return docx_to_html(file_path)
+    elif ext == ".pdf":
+        return pdf_to_html(file_path)
+    elif ext in (".txt", ".text"):
+        return txt_to_html(file_path)
+    else:
+        print(f"[document_to_html] Format non supporté : {ext}")
+        return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parseur de questions interactif (mode Q&A structuré)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_exam_document(file_path: str) -> list:
     """
-    Lit un PDF ou DOCX et extrait les questions/options selon un formatage attendu.
-    Retourne une liste de questions pour le mode interactif.
+    Lit un PDF ou DOCX et tente d'extraire des questions/options
+    selon un formatage numéroté (1. / A. / PARTIE …).
+    Retourne [] si le document n'est pas dans ce format — dans ce cas
+    exam_content_html prend le relais pour l'affichage.
     """
     if not os.path.exists(file_path):
         return []
@@ -156,44 +461,45 @@ def parse_exam_document(file_path: str) -> list:
         if ext == ".pdf":
             with pdfplumber.open(file_path) as pdf:
                 raw_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-        elif ext in [".doc", ".docx"]:
+        elif ext in (".doc", ".docx"):
             doc = Document(file_path)
             raw_text = "\n".join(p.text for p in doc.paragraphs)
+        elif ext in (".txt", ".text"):
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                raw_text = f.read()
         else:
             return []
     except Exception as e:
-        print(f"Error reading document: {e}")
+        print(f"[parse_exam_document] Erreur lecture : {e}")
         return []
 
     return parse_exam_text(raw_text)
 
 
 def parse_exam_text(raw_text: str) -> list:
-    questions = []
-    lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-
+    """Parse un texte brut pour extraire des questions numérotées + options QCM."""
+    questions  = []
+    lines      = [line.strip() for line in raw_text.split("\n") if line.strip()]
     current_part = "Examen"
-    current_q = None
+    current_q    = None
 
     for line in lines:
         if line.upper().startswith("PARTIE "):
             current_part = line
             continue
 
-        # Match "1. La norme ISO..." ou "Cas 1 : Un laboratoire..."
-        q_match = re.match(r"^((?:\d+\.)|(?:Cas\s+\d+\s*:))\s*(.*)", line, re.IGNORECASE)
-        # Match "A. Les laboratoires médicaux"
+        q_match  = re.match(r"^((?:\d+\.)|(?:Cas\s+\d+\s*:))\s*(.*)", line, re.IGNORECASE)
         opt_match = re.match(r"^([A-D]\.)\s*(.*)", line)
 
         if q_match and "QCM" not in line:
             if current_q:
                 questions.append(current_q)
-            q_type = "qcm" if "QCM" in current_part.upper() else "open"
+            q_type    = "qcm" if "QCM" in current_part.upper() else "open"
             current_q = {
-                "id": str(uuid.uuid4()),
-                "part": current_part,
-                "type": q_type,
-                "text": line,
+                "id":      str(uuid.uuid4()),
+                "part":    current_part,
+                "type":    q_type,
+                "text":    line,
                 "options": [],
             }
         elif opt_match and current_q and current_q["type"] == "qcm":

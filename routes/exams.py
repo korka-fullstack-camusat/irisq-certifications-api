@@ -13,7 +13,7 @@ import os
 import secrets
 import urllib.parse
 import traceback
-from services.parser_service import parse_exam_document, docx_to_html, pdf_to_html
+from services.parser_service import parse_exam_document, document_to_html
 
 router = APIRouter()
 
@@ -73,15 +73,13 @@ async def create_exam(exam: ExamCreate = Body(...), current_user: UserOut = Depe
                         temp_path = temp_file.name
 
                     try:
-                        # 1. Extraction des questions (mode interactif)
+                        # 1. Extraction des questions (mode interactif Q&A)
                         questions = parse_exam_document(temp_path)
                         exam_dict["parsed_questions"] = questions
 
-                        # 2. Conversion fidèle en HTML (ce que le candidat voit)
-                        if ext in [".doc", ".docx"]:
-                            exam_dict["exam_content_html"] = docx_to_html(temp_path)
-                        elif ext == ".pdf":
-                            exam_dict["exam_content_html"] = pdf_to_html(temp_path)
+                        # 2. Conversion universelle → HTML fidèle (affiché au candidat)
+                        #    Supporte DOCX (avec images), PDF, TXT et tout nouveau format
+                        exam_dict["exam_content_html"] = document_to_html(temp_path)
 
                     except Exception as parse_e:
                         print(f"Failed to parse/convert document: {parse_e}")
