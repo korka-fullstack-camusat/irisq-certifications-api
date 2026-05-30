@@ -100,7 +100,10 @@
       "Bash(vercel --prod)",
       "Bash(mkdir -p \"C:/AROKA-TECH/IRISQ/Frontend/irisqfrontend/src/app/candidat/candidatures\")",
       "Bash(git commit *)",
-      "Bash(dir /s /b \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Frontend\\\\irisqfrontend\\\\src\\\\app\\\\dashboard\\\\*.tsx\")"
+      "Bash(dir /s /b \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Frontend\\\\irisqfrontend\\\\src\\\\app\\\\dashboard\\\\*.tsx\")",
+      "Bash(pip show *)",
+      "Bash(cat requirements.txt)",
+      "Bash(cat requirements*.txt)"
     ]
   }
 }

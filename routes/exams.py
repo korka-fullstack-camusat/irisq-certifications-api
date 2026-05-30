@@ -13,7 +13,7 @@ import os
 import secrets
 import urllib.parse
 import traceback
-from services.parser_service import parse_exam_document
+from services.parser_service import parse_exam_document, docx_to_html, pdf_to_html
 
 router = APIRouter()
 
@@ -48,10 +48,11 @@ async def create_exam(exam: ExamCreate = Body(...), current_user: UserOut = Depe
         exam_dict["created_at"] = datetime.utcnow()
         exam_dict["created_by"] = current_user.email
         
-        # ── Parse the uploaded document into interactive questions ──
+        # ── Parse the uploaded document into interactive questions + HTML content ──
         doc_url = exam_dict.get("document_url", "")
         exam_dict["parsed_questions"] = []
-        
+        exam_dict["exam_content_html"] = ""
+
         if doc_url and "/api/files/" in doc_url:
             try:
                 # Extract the File ID from the GridFS URL
@@ -60,28 +61,34 @@ async def create_exam(exam: ExamCreate = Body(...), current_user: UserOut = Depe
                     fs = get_fs()
                     grid_out = await fs.open_download_stream(ObjectId(file_id_str))
                     content = await grid_out.read()
-                    
-                    # Determine original extension if possible or default to pdf
+
+                    # Determine original extension
                     ext = ".pdf"
                     if grid_out.metadata and "original_name" in grid_out.metadata:
-                        ext = os.path.splitext(grid_out.metadata["original_name"])[1]
-                        
+                        ext = os.path.splitext(grid_out.metadata["original_name"])[1].lower()
+
                     import tempfile
-                    # Save temporarily to disk so docx/pdfplumber can read it
                     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
                         temp_file.write(content)
                         temp_path = temp_file.name
-                        
+
                     try:
+                        # 1. Extraction des questions (mode interactif)
                         questions = parse_exam_document(temp_path)
                         exam_dict["parsed_questions"] = questions
+
+                        # 2. Conversion fidèle en HTML (ce que le candidat voit)
+                        if ext in [".doc", ".docx"]:
+                            exam_dict["exam_content_html"] = docx_to_html(temp_path)
+                        elif ext == ".pdf":
+                            exam_dict["exam_content_html"] = pdf_to_html(temp_path)
+
                     except Exception as parse_e:
-                        print(f"Failed to parse document content: {parse_e}")
+                        print(f"Failed to parse/convert document: {parse_e}")
                     finally:
-                        # Clean up the temp file
                         if os.path.exists(temp_path):
                             os.remove(temp_path)
-                            
+
             except Exception as e:
                 print(f"Failed to retrieve and parse exam document from GridFS: {e}")
                 
