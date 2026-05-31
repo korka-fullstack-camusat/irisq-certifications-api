@@ -767,6 +767,13 @@ async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body
     if not response_doc:
          raise HTTPException(status_code=404, detail=f"Response {id} not found")
 
+    # ── Blocage double soumission ──────────────────────────────────────────────
+    if response_doc.get("exam_status") in ("submitted", "graded"):
+        raise HTTPException(
+            status_code=409,
+            detail="Cette copie a déjà été soumise. Il vous est impossible de repasser cet examen."
+        )
+
     # Generate the PDF document from the answers
     generated_pdf_url = submission.exam_document
 
@@ -803,6 +810,8 @@ async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body
             "cheat_alerts": submission.cheat_alerts,
             "exam_answers": submission.exam_answers,
             "candidate_photos": submission.candidate_photos,
+            "exam_status": "submitted",
+            "exam_submitted_at": datetime.utcnow(),
         }}
     )
 
