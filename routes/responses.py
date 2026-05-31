@@ -290,37 +290,40 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
     return serialize_doc(created_response)
 
 
-@router.get("/responses/multi-candidatures", response_description="Candidats ayant postulé à plusieurs formations dans la même session")
+@router.get("/responses/multi-candidatures", response_description="Candidats ayant postulé à plusieurs formations")
 async def list_multi_candidatures(
     session_id: Optional[str] = Query(None, description="Filtrer par session"),
     current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
 ):
     """
-    Retourne les candidats ayant soumis plus d'une candidature pour des certifications
-    différentes dans la même session.
-    Chaque entrée groupe les dossiers complets par (email × session_id).
+    Retourne les candidats ayant soumis plus d'une candidature (toutes origines confondues :
+    formulaire public avec session ET espace candidat sans session).
+
+    Stratégie :
+    - Grouper par public_id SANS filtre session dans le $match initial.
+      Les dossiers portail (session_id=null) sont ainsi comptés dans le même groupe
+      que les dossiers traditionnels du même candidat.
+    - Si un filtre session est demandé, on l'applique APRÈS le groupement :
+      on garde les groupes dont au moins un dossier appartient à la session voulue.
     """
     db = get_database()
 
-    match_filter: dict = {}
-    if session_id:
-        if not ObjectId.is_valid(session_id):
-            raise HTTPException(status_code=400, detail="ID de session invalide")
-        match_filter["session_id"] = session_id
+    if session_id and not ObjectId.is_valid(session_id):
+        raise HTTPException(status_code=400, detail="ID de session invalide")
 
-    # Group by public_id — the reliable link between all dossiers of the same candidate,
-    # whether submitted via the public form (with session_id) or via the candidate portal
-    # (without session_id). This replaces the old email × session_id grouping which missed
-    # portal-submitted dossiers.
+    # ── Aggrégation : grouper tous les dossiers par public_id ─────────────────
+    # Pas de filtre session_id ici — les dossiers portail (session_id=null)
+    # doivent être inclus dans le décompte.
     pipeline = [
-        {"$match": {**match_filter, "public_id": {"$ne": None, "$exists": True}}},
+        {"$match": {"public_id": {"$ne": None, "$exists": True}}},
         {"$group": {
             "_id": "$public_id",
-            "count": {"$sum": 1},
-            "response_ids": {"$push": {"$toString": "$_id"}},
-            "name": {"$first": "$name"},
-            "email": {"$first": "$email"},
-            "session_id": {"$first": "$session_id"},
+            "count":               {"$sum": 1},
+            "response_ids":        {"$push": {"$toString": "$_id"}},
+            "name":                {"$first": "$name"},
+            "email":               {"$first": "$email"},
+            "primary_session_id":  {"$first": "$session_id"},
+            "all_session_ids":     {"$addToSet": "$session_id"},
             "candidate_account_id": {"$first": "$candidate_account_id"},
         }},
         {"$match": {"count": {"$gt": 1}}},
@@ -329,15 +332,26 @@ async def list_multi_candidatures(
 
     groups = await db["responses"].aggregate(pipeline).to_list(500)
 
-    # Enrich with session names
-    session_ids = list({g["session_id"] for g in groups if g.get("session_id")})
+    # ── Filtre session appliqué après groupement ──────────────────────────────
+    # On garde les candidats dont au moins un dossier (traditionnel) est dans
+    # la session demandée. Leurs dossiers portail (session_id=null) restent visibles.
+    if session_id:
+        groups = [g for g in groups if session_id in (g.get("all_session_ids") or [])]
+
+    # ── Récupération des noms de sessions ─────────────────────────────────────
+    all_sids = list({
+        sid
+        for g in groups
+        for sid in (g.get("all_session_ids") or [])
+        if sid
+    })
     sessions_map: dict = {}
-    if session_ids:
-        valid_ids = [sid for sid in session_ids if ObjectId.is_valid(sid)]
+    if all_sids:
+        valid_ids = [sid for sid in all_sids if ObjectId.is_valid(sid)]
         async for s in db["sessions"].find({"_id": {"$in": [ObjectId(s) for s in valid_ids]}}):
             sessions_map[str(s["_id"])] = s.get("name", str(s["_id"]))
 
-    # Fetch full dossier data for each group
+    # ── Construction des résultats ────────────────────────────────────────────
     results = []
     for g in groups:
         ids = [ObjectId(rid) for rid in g["response_ids"] if ObjectId.is_valid(rid)]
@@ -345,20 +359,24 @@ async def list_multi_candidatures(
 
         dossiers_out = []
         for d in raw_dossiers:
-            submitted = d.get("submitted_at")
+            submitted  = d.get("submitted_at")
+            d_sid      = d.get("session_id")
             dossiers_out.append({
-                "_id": str(d["_id"]),
-                "public_id": d.get("public_id"),
-                "form_id": d.get("form_id"),
-                "status": d.get("status"),
-                "exam_mode": d.get("exam_mode"),
-                "exam_type": d.get("exam_type"),
-                "exam_status": d.get("exam_status"),
-                "exam_grade": d.get("exam_grade"),
-                "final_grade": d.get("final_grade"),
+                "_id":               str(d["_id"]),
+                "public_id":         d.get("public_id"),
+                "form_id":           d.get("form_id"),
+                "status":            d.get("status"),
+                "exam_mode":         d.get("exam_mode"),
+                "exam_type":         d.get("exam_type"),
+                "exam_status":       d.get("exam_status"),
+                "exam_grade":        d.get("exam_grade"),
+                "final_grade":       d.get("final_grade"),
                 "final_appreciation": d.get("final_appreciation"),
-                "submitted_at": submitted.isoformat() if isinstance(submitted, datetime) else submitted,
-                "certification": (d.get("answers") or {}).get("Certification souhaitée", "N/A"),
+                "submitted_at":      submitted.isoformat() if isinstance(submitted, datetime) else submitted,
+                "certification":     (d.get("answers") or {}).get("Certification souhaitée", "N/A"),
+                # Session du dossier individuel (null pour les dossiers portail)
+                "session_id":        d_sid,
+                "session_name":      sessions_map.get(d_sid) if d_sid else None,
                 "answers": {
                     k: v for k, v in (d.get("answers") or {}).items()
                     if k in (
@@ -370,18 +388,18 @@ async def list_multi_candidatures(
                 "documents_validation": d.get("documents_validation") or {},
             })
 
-        # Session label: use session name if available, else "Espace candidat" for portal dossiers
-        session_id = g.get("session_id")
-        session_name = sessions_map.get(session_id, "Espace candidat") if session_id else "Espace candidat"
+        # Session principale pour l'en-tête du groupe (première session trouvée)
+        grp_sid   = g.get("primary_session_id")
+        grp_sname = sessions_map.get(grp_sid) if grp_sid else None
 
         results.append({
-            "email": g["email"],
-            "name": g["name"],
-            "session_id": session_id,
-            "session_name": session_name,
-            "candidate_account_id": g.get("candidate_account_id"),
-            "candidatures_count": g["count"],
-            "dossiers": dossiers_out,
+            "email":                 g["email"],
+            "name":                  g["name"],
+            "session_id":            grp_sid,
+            "session_name":          grp_sname or "Multi-sessions",
+            "candidate_account_id":  g.get("candidate_account_id"),
+            "candidatures_count":    g["count"],
+            "dossiers":              dossiers_out,
         })
 
     return results
