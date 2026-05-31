@@ -417,8 +417,13 @@ async def candidate_ensure_exam_content(
     if not exam:
         raise HTTPException(status_code=404, detail="Examen introuvable.")
 
-    # Si le contenu HTML est déjà présent, rien à faire
-    if exam.get("exam_content_html"):
+    # Si le contenu HTML est déjà présent ET contient du texte visible → rien à faire.
+    # Un HTML "whitespace-only" (<div>&nbsp;</div>) est considéré comme vide :
+    # il est produit par pdfplumber sur un PDF scanné et ne contient rien d'utile.
+    import re as _re
+    existing_html = exam.get("exam_content_html") or ""
+    visible_text = _re.sub(r'<[^>]+>', '', existing_html).replace('&nbsp;', '').strip()
+    if visible_text:
         return _serialize_exam(exam)
 
     # Pas de document → impossible de parser

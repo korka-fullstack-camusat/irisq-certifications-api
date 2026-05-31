@@ -362,10 +362,11 @@ def docx_to_html(file_path: str) -> str:
 def pdf_to_html(file_path: str) -> str:
     """
     Extrait le texte d'un PDF page par page et le retourne en HTML.
-    Les PDFs sont aussi affichables via iframe natif — ce fallback
-    sert uniquement si l'iframe n'est pas disponible.
+    Retourne "" si aucun texte n'est extractible (PDF scanné / image-only).
+    Les PDFs sont alors affichables nativement via Blob URL dans un <iframe>.
     """
     try:
+        has_text = False   # flag : au moins une ligne de texte réel trouvée
         parts = [
             "<div style='font-family:inherit;font-size:0.9em;line-height:1.7;"
             "color:#1a1a2e;padding:4px 2px'>"
@@ -383,9 +384,16 @@ def pdf_to_html(file_path: str) -> str:
                     esc = _escape(line)
                     if esc.strip():
                         parts.append(f"<p style='margin:0.25em 0'>{esc}</p>")
+                        has_text = True   # texte réel détecté
                     else:
                         parts.append("<p style='margin:2px 0'>&nbsp;</p>")
         parts.append("</div>")
+
+        # PDF scanné (image-only) : aucun texte extractible → retourner ""
+        # Le frontend utilisera alors un Blob URL pour afficher le PDF en iframe.
+        if not has_text:
+            return ""
+
         return "".join(parts)
     except Exception as e:
         print(f"[pdf_to_html] Erreur : {e}")
