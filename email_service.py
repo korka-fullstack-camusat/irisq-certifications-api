@@ -129,9 +129,60 @@ def notify_rh_new_submission(candidate_id: str, candidate_name: str, certificati
     send_email_multi(RH_EMAILS, subject, html_body)
 
 
-def notify_candidate_submission_received(to_email: str, candidate_name: str, public_id: str, certification: str, default_password: str = ""):
-    """Notifie le candidat que sa candidature a bien été reçue."""
-    subject = f"Votre candidature a été envoyée — {certification}"
+def notify_candidate_submission_received(
+    to_email: str,
+    candidate_name: str,
+    public_id: str,
+    certifications,        # str ou List[str]
+    default_password: str = "",
+):
+    """Notifie le candidat que sa (ses) candidature(s) a bien été reçue.
+
+    `certifications` accepte soit une chaîne (rétro-compatibilité) soit une
+    liste de certifications (cas multi-formations → un seul email récapitulatif).
+    """
+    # Normaliser en liste
+    if isinstance(certifications, str):
+        cert_list: list = [certifications]
+    else:
+        cert_list = list(certifications) if certifications else []
+
+    multi = len(cert_list) > 1
+
+    # Sujet
+    if multi:
+        subject = f"Vos candidatures ont été envoyées — {len(cert_list)} formations"
+    else:
+        subject = f"Votre candidature a été envoyée — {cert_list[0] if cert_list else ''}"
+
+    # Bloc certifications (liste ou texte simple)
+    if multi:
+        items_html = "".join(
+            f'<li style="margin-bottom: 6px; color: #1a237e; font-weight: 700;">{c}</li>'
+            for c in cert_list
+        )
+        cert_block = f"""
+            <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 16px 0;">
+                Bonjour <strong>{candidate_name}</strong>,<br>
+                vos candidatures pour les <strong>{len(cert_list)} formations</strong> suivantes ont bien été reçues.
+            </p>
+            <ul style="list-style: none; padding: 12px 20px; margin: 0 0 20px 0; background: #f0f4ff; border-radius: 10px; border-left: 4px solid #1a237e;">
+                {items_html}
+            </ul>
+            <p style="color: #64748b; font-size: 13px; text-align: center; margin: 0 0 28px 0;">
+                Un seul identifiant vous permet de suivre l&apos;ensemble de vos dossiers.
+            </p>
+        """
+    else:
+        cert_name = cert_list[0] if cert_list else ""
+        cert_block = f"""
+            <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 28px 0;">
+                Bonjour <strong>{candidate_name}</strong>,<br>
+                votre candidature pour <strong>{cert_name}</strong> a bien été reçue.<br>
+                Pour suivre l&apos;évolution de votre dossier, connectez-vous à votre espace candidat.
+            </p>
+        """
+
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #f4f6f9; padding: 32px 16px;">
 
@@ -145,15 +196,11 @@ def notify_candidate_submission_received(to_email: str, candidate_name: str, pub
 
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
 
-            <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 12px 0;">
-                Candidature envoyée
+            <h2 style="color: #1a237e; font-size: 20px; font-weight: 800; text-align: center; margin: 0 0 16px 0;">
+                {'Candidatures envoyées' if multi else 'Candidature envoyée'}
             </h2>
 
-            <p style="color: #475569; font-size: 14px; line-height: 1.7; text-align: center; margin: 0 0 28px 0;">
-                Bonjour <strong>{candidate_name}</strong>,<br>
-                votre candidature pour <strong>{certification}</strong> a bien été reçue.<br>
-                Pour suivre l'évolution de votre dossier, connectez-vous à votre espace candidat.
-            </p>
+            {cert_block}
 
             <div style="height: 1px; background: #e2e8f0; margin-bottom: 24px;"></div>
 
@@ -184,7 +231,7 @@ def notify_candidate_submission_received(to_email: str, candidate_name: str, pub
         </p>
     </div>
     """
-    send_email(to_email, subject, html_body)
+    return send_email(to_email, subject, html_body)
 
 
 def notify_candidate_status_update(to_email: str, public_id: str, status: str, certification: str, reason: str = None):

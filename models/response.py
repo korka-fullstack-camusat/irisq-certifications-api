@@ -55,7 +55,10 @@ class ResponseBase(BaseModel):
 
 
 class ResponseCreate(ResponseBase):
-    pass
+    # Liste de toutes les certifications choisies dans le même formulaire
+    # multi-formations. Utilisé uniquement pour envoyer UN SEUL email récapitulatif
+    # lors du premier dossier (n'est pas enregistré en base).
+    all_certifications: Optional[List[str]] = None
 
 
 class ResponseDBModel(ResponseBase):

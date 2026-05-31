@@ -174,6 +174,8 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
         raise HTTPException(status_code=404, detail="Form not found")
 
     response_dict = response.model_dump()
+    # all_certifications sert uniquement à l'email récapitulatif — pas en base
+    all_certifications: list = response_dict.pop("all_certifications", None) or []
     response_dict["form_id"] = form_id
     now = datetime.utcnow()
     response_dict["submitted_at"] = now
@@ -273,13 +275,18 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
     # ── Notification RH (background — non bloquante) ──────────────────────────
     background_tasks.add_task(notify_rh_new_submission, candidate_id, candidate_name, certification)
 
-    # ── Email candidat : envoi SYNCHRONE pour garantir la délivrance ─────────
-    # L'email contient les credentials (public_id + mot de passe) dont le
-    # candidat a absolument besoin. On l'envoie avant de renvoyer la réponse
-    # et on loggue explicitement le résultat.
-    if candidate_email:
+    # ── Email candidat : envoi SYNCHRONE, UNIQUEMENT pour le premier dossier ──
+    # Quand le candidat choisit plusieurs formations, le frontend soumet un dossier
+    # par certification en réutilisant le même public_id à partir du 2e appel.
+    # On n'envoie donc l'email QUE pour le tout premier dossier (public_id absent
+    # dans la requête originale) afin d'éviter les doublons.
+    # all_certifications contient la liste complète des formations choisies si
+    # le frontend la transmet — l'email les liste toutes d'un coup.
+    is_first_submission = not bool(response.public_id)  # True = pas encore de matricule
+    if candidate_email and is_first_submission:
+        certs_for_email = all_certifications if all_certifications else [certification]
         email_ok = notify_candidate_submission_received(
-            candidate_email, candidate_name, public_id, certification, default_password,
+            candidate_email, candidate_name, public_id, certs_for_email, default_password,
         )
         if not email_ok:
             print(
