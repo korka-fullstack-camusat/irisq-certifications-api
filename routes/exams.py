@@ -128,6 +128,68 @@ async def list_exams(certification: Optional[str] = None, session_id: Optional[s
     exams = await db["exams"].find(query).sort("created_at", -1).to_list(1000)
     return [serialize_doc(e) for e in exams]
 
+@router.post("/exams/{id}/reparse", response_description="Re-parse exam document to regenerate exam_content_html and parsed_questions")
+async def reparse_exam(id: str, current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"]))):
+    """Re-télécharge le document GridFS de l'examen et régénère exam_content_html / parsed_questions.
+    Utile pour les examens créés avant l'ajout du parseur ou dont la conversion avait échoué.
+    """
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid exam ID format")
+
+    exam = await db["exams"].find_one({"_id": ObjectId(id)})
+    if not exam:
+        raise HTTPException(status_code=404, detail=f"Exam {id} not found")
+
+    doc_url = exam.get("document_url", "")
+    if not doc_url or "/api/files/" not in doc_url:
+        raise HTTPException(status_code=400, detail="Cet examen n'a pas de document GridFS associé.")
+
+    try:
+        # Extraire le file_id de l'URL (peut contenir un query string ?n=...)
+        raw_path = doc_url.split("/api/files/")[-1].split("?")[0].strip()
+        if not ObjectId.is_valid(raw_path):
+            raise HTTPException(status_code=400, detail=f"ID de fichier invalide dans l'URL : {raw_path}")
+
+        fs = get_fs()
+        grid_out = await fs.open_download_stream(ObjectId(raw_path))
+        content = await grid_out.read()
+
+        ext = ".pdf"
+        if grid_out.metadata and "original_name" in grid_out.metadata:
+            ext = os.path.splitext(grid_out.metadata["original_name"])[1].lower()
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(content)
+            temp_path = tmp.name
+
+        try:
+            new_html = document_to_html(temp_path)
+            new_questions = parse_exam_document(temp_path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        await db["exams"].update_one(
+            {"_id": ObjectId(id)},
+            {"$set": {"exam_content_html": new_html, "parsed_questions": new_questions}},
+        )
+        updated = await db["exams"].find_one({"_id": ObjectId(id)})
+        return {
+            "message": "Document re-parsé avec succès",
+            "exam_content_html_length": len(new_html),
+            "parsed_questions_count": len(new_questions),
+            "exam": serialize_doc(updated),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error reparsing exam {id}: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors du re-parsing : {str(e)}")
+
+
 @router.delete("/exams/{id}", response_description="Delete an exam")
 async def delete_exam(id: str, current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"]))):
     db = get_database()
