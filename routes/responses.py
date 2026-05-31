@@ -692,6 +692,18 @@ async def lock_correction(id: str, current_user: UserOut = Depends(require_role(
     raise HTTPException(status_code=404, detail=f"Response {id} not found")
 
 
+@router.get("/responses/exam-blocked", response_description="Liste tous les candidats dont l'accès à l'examen est bloqué")
+async def get_exam_blocked_responses(
+    current_user: UserOut = Depends(require_role(["EVALUATEUR", "RH"])),
+):
+    """Retourne toutes les réponses où exam_blocked == True, quelle que soit la session.
+    Permet aux évaluateurs de débloquer des candidats même hors-session.
+    """
+    db = get_database()
+    docs = await db["responses"].find({"exam_blocked": True}).sort("exam_blocked_at", -1).to_list(500)
+    return [serialize_doc(d, user_role=current_user.role) for d in docs]
+
+
 @router.post("/responses/{id}/unblock-exam", response_description="Débloquer l'accès à l'examen d'un candidat bloqué")
 async def unblock_exam(
     id: str,
