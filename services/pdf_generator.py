@@ -1,7 +1,9 @@
 import os
+import re
 import tempfile
 from fpdf import FPDF
 from datetime import datetime
+from html import unescape
 from database import get_fs
 
 class PDF(FPDF):
@@ -15,6 +17,24 @@ class PDF(FPDF):
         self.set_y(-15)
         self.set_font("helvetica", "I", 8)
         self.cell(self.epw, 10, f"Page {self.page_no()}/{{nb}}", 0, 0, "C")
+
+def html_to_plain_text(html: str) -> str:
+    """Convert RichTextEditor HTML to plain text for PDF output."""
+    if not html:
+        return ""
+    text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>', '  - ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<h[1-6][^>]*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</h[1-6]>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</tr>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</td>', ' | ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</th>', ' | ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = unescape(text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 def sanitize_text(text: str) -> str:
     """Removes or replaces characters not supported by standard FPDF2 helvetica (latin-1)."""
@@ -73,7 +93,7 @@ async def generate_and_upload_candidate_pdf(candidate_info: dict, questions: lis
     else:
         for i, ans in enumerate(answers, 1):
             q_id = ans.get("question_id")
-            answer_text = sanitize_text(ans.get("answer", ""))
+            answer_text = sanitize_text(html_to_plain_text(ans.get("answer", "")))
             
             question_data = q_map.get(q_id, {})
             question_text = sanitize_text(question_data.get("text", f"Question {i}"))
