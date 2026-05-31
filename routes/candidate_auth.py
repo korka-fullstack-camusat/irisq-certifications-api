@@ -20,7 +20,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
-from database import get_database
+from database import get_database, get_fs
 from email_service import notify_candidate_password_reset  # noqa: F401 (used inline too)
 from utils.security import SECRET_KEY, ALGORITHM, verify_password, get_password_hash
 
@@ -399,6 +399,70 @@ async def candidate_exams_all(candidate=Depends(get_current_candidate)):
 
     return result
 
+
+@router.post("/exam/{exam_id}/ensure-content")
+async def candidate_ensure_exam_content(
+    exam_id: str,
+    candidate=Depends(get_current_candidate),
+):
+    """Re-parse le document de l'examen si exam_content_html est vide.
+    Accessible aux candidats authentifiés (pas besoin du rôle ÉVALUATEUR).
+    Retourne l'examen mis à jour.
+    """
+    db = get_database()
+    if not ObjectId.is_valid(exam_id):
+        raise HTTPException(status_code=400, detail="ID d'examen invalide.")
+
+    exam = await db["exams"].find_one({"_id": ObjectId(exam_id)})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Examen introuvable.")
+
+    # Si le contenu HTML est déjà présent, rien à faire
+    if exam.get("exam_content_html"):
+        return _serialize_exam(exam)
+
+    # Pas de document → impossible de parser
+    doc_url = exam.get("document_url", "")
+    if not doc_url or "/api/files/" not in doc_url:
+        return _serialize_exam(exam)
+
+    try:
+        raw_path = doc_url.split("/api/files/")[-1].split("?")[0].strip()
+        if not ObjectId.is_valid(raw_path):
+            return _serialize_exam(exam)
+
+        import os, tempfile
+        from services.parser_service import document_to_html, parse_exam_document
+
+        fs = get_fs()
+        grid_out = await fs.open_download_stream(ObjectId(raw_path))
+        content = await grid_out.read()
+
+        ext = ".pdf"
+        if grid_out.metadata and "original_name" in grid_out.metadata:
+            ext = os.path.splitext(grid_out.metadata["original_name"])[1].lower()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(content)
+            temp_path = tmp.name
+
+        try:
+            new_html = document_to_html(temp_path)
+            new_questions = parse_exam_document(temp_path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        await db["exams"].update_one(
+            {"_id": ObjectId(exam_id)},
+            {"$set": {"exam_content_html": new_html, "parsed_questions": new_questions}},
+        )
+        updated = await db["exams"].find_one({"_id": ObjectId(exam_id)})
+        return _serialize_exam(updated)
+
+    except Exception as e:
+        print(f"[ensure-content] Erreur re-parsing exam {exam_id}: {e}")
+        return _serialize_exam(exam)
 
 class ReportBlockedIn(BaseModel):
     reason: str = "Rechargement de page pendant l'examen"
