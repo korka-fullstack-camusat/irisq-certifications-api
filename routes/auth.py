@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime
 from database import get_database
 from models.user import UserCreate, UserInDB, Token, UserOut
 from utils.security import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
-from dependencies.auth import get_current_user
+from dependencies.auth import get_current_user, require_role
 from bson import ObjectId
 from pydantic import BaseModel, EmailStr
 import secrets
-from email_service import notify_admin_password_reset
+import httpx
+from email_service import notify_admin_password_reset, BREVO_API_KEY, BREVO_API_URL, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME
 
 router = APIRouter()
 
@@ -102,3 +103,68 @@ async def forgot_password(
     )
 
     return {"message": "Si cet email est enregistré, un mot de passe provisoire vient d'être envoyé."}
+
+
+# ── Endpoint de diagnostic email (admin uniquement) ───────────────────────────
+
+class TestEmailPayload(BaseModel):
+    to_email: str
+
+@router.post("/admin/test-email", tags=["Admin"])
+async def send_test_email(
+    payload: TestEmailPayload,
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
+    """
+    Envoie un email de test via Brevo pour vérifier la configuration.
+    Retourne le statut détaillé de l'envoi.
+    """
+    if not BREVO_API_KEY:
+        raise HTTPException(status_code=500, detail="BREVO_API_KEY n'est pas configuré sur ce serveur.")
+    if not BREVO_SENDER_EMAIL:
+        raise HTTPException(status_code=500, detail="BREVO_SENDER_EMAIL n'est pas configuré sur ce serveur.")
+
+    test_body = {
+        "sender": {"name": BREVO_SENDER_NAME or "IRISQ Certification", "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": payload.to_email}],
+        "subject": "[TEST] Vérification email IRISQ",
+        "htmlContent": f"""
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:32px;background:#f4f6f9;border-radius:12px;">
+            <h2 style="color:#1a237e;">Test de configuration email</h2>
+            <p style="color:#475569;">Cet email confirme que la configuration Brevo d'IRISQ fonctionne correctement.</p>
+            <p style="color:#64748b;font-size:13px;">Expéditeur : <strong>{BREVO_SENDER_EMAIL}</strong></p>
+            <p style="color:#64748b;font-size:13px;">Destinataire : <strong>{payload.to_email}</strong></p>
+        </div>
+        """,
+    }
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    try:
+        resp = httpx.post(BREVO_API_URL, json=test_body, headers=headers, timeout=15)
+        if resp.status_code in (200, 201):
+            return {
+                "success": True,
+                "message": f"Email de test envoyé avec succès à {payload.to_email}",
+                "sender": BREVO_SENDER_EMAIL,
+                "brevo_status": resp.status_code,
+            }
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Brevo a refusé l'envoi",
+                    "brevo_status": resp.status_code,
+                    "brevo_response": resp.text,
+                    "sender": BREVO_SENDER_EMAIL,
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout lors de la connexion à l'API Brevo.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur inattendue : {exc}")

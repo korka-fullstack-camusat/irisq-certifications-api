@@ -270,12 +270,22 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
     public_id = response_dict.get("public_id", "N/A")
     certification = response_dict.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
 
+    # ── Notification RH (background — non bloquante) ──────────────────────────
     background_tasks.add_task(notify_rh_new_submission, candidate_id, candidate_name, certification)
+
+    # ── Email candidat : envoi SYNCHRONE pour garantir la délivrance ─────────
+    # L'email contient les credentials (public_id + mot de passe) dont le
+    # candidat a absolument besoin. On l'envoie avant de renvoyer la réponse
+    # et on loggue explicitement le résultat.
     if candidate_email:
-        background_tasks.add_task(
-            notify_candidate_submission_received,
+        email_ok = notify_candidate_submission_received(
             candidate_email, candidate_name, public_id, certification, default_password,
         )
+        if not email_ok:
+            print(
+                f"[WARN] L'email de confirmation n'a pas pu être envoyé à {candidate_email} "
+                f"(public_id={public_id}). Vérifier la config Brevo."
+            )
 
     return serialize_doc(created_response)
 
