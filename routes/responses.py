@@ -308,11 +308,14 @@ async def list_multi_candidatures(
             raise HTTPException(status_code=400, detail="ID de session invalide")
         match_filter["session_id"] = session_id
 
-    # First: find (email × session_id) groups with count > 1
+    # Group by public_id — the reliable link between all dossiers of the same candidate,
+    # whether submitted via the public form (with session_id) or via the candidate portal
+    # (without session_id). This replaces the old email × session_id grouping which missed
+    # portal-submitted dossiers.
     pipeline = [
-        {"$match": match_filter},
+        {"$match": {**match_filter, "public_id": {"$ne": None, "$exists": True}}},
         {"$group": {
-            "_id": {"email": "$email", "session_id": "$session_id"},
+            "_id": "$public_id",
             "count": {"$sum": 1},
             "response_ids": {"$push": {"$toString": "$_id"}},
             "name": {"$first": "$name"},
@@ -321,7 +324,7 @@ async def list_multi_candidatures(
             "candidate_account_id": {"$first": "$candidate_account_id"},
         }},
         {"$match": {"count": {"$gt": 1}}},
-        {"$sort": {"session_id": 1, "email": 1}},
+        {"$sort": {"email": 1}},
     ]
 
     groups = await db["responses"].aggregate(pipeline).to_list(500)
@@ -367,11 +370,15 @@ async def list_multi_candidatures(
                 "documents_validation": d.get("documents_validation") or {},
             })
 
+        # Session label: use session name if available, else "Espace candidat" for portal dossiers
+        session_id = g.get("session_id")
+        session_name = sessions_map.get(session_id, "Espace candidat") if session_id else "Espace candidat"
+
         results.append({
             "email": g["email"],
             "name": g["name"],
-            "session_id": g["session_id"],
-            "session_name": sessions_map.get(g["session_id"], g["session_id"]),
+            "session_id": session_id,
+            "session_name": session_name,
             "candidate_account_id": g.get("candidate_account_id"),
             "candidatures_count": g["count"],
             "dossiers": dossiers_out,

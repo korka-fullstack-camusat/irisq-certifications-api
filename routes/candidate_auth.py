@@ -484,6 +484,7 @@ async def resubmit_document(
 class NewApplicationIn(BaseModel):
     certification: str
     exam_mode: str = "online"   # "online" | "onsite"
+    documents: dict = {}        # {"CV": "https://...", "Pièce d'identité": "...", ...}
 
 
 @router.post("/new-application", status_code=201)
@@ -531,6 +532,13 @@ async def new_application(
     candidate_id = f"CAND-{secrets.token_hex(3).upper()}"
     exam_token   = secrets.token_urlsafe(32)
 
+    # Merge certification + provided document URLs into answers
+    doc_keys = {"CV", "Pièce d'identité", "Justificatif d'expérience", "Diplômes"}
+    answers = {"Certification souhaitée": certification}
+    for k, v in (payload.documents or {}).items():
+        if k in doc_keys and v:
+            answers[k] = v
+
     response_doc = {
         "form_id":        form_id,
         "name":           name,
@@ -543,7 +551,7 @@ async def new_application(
         "exam_mode":      exam_mode,
         "status":         "pending",
         "must_change_password": False,
-        "answers": {"Certification souhaitée": certification},
+        "answers":        answers,
         "submitted_at":   now,
     }
 
