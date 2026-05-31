@@ -248,6 +248,15 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
                     <strong>⚠️ IMPORTANT :</strong> Veuillez conserver précieusement votre <strong>ID Public ({public_id})</strong>. Il vous sera indispensable pour la suite de votre évaluation.
                 </p>
             </div>
+
+            {"" if status == "rejected" else f"""
+            <div style="text-align: center; margin-top: 8px;">
+                <a href="{FRONTEND_URL}/candidat/login"
+                   style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
+                    Accéder à mon espace candidat
+                </a>
+            </div>
+            """}
         </div>
 
         <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 24px;">
@@ -444,13 +453,13 @@ def notify_candidate_document_issue(to_email: str, candidate_name: str, public_i
             {extra_block}
 
             <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
-                Merci de bien vouloir renvoyer ce document corrigé en reprenant contact avec notre équipe.
+                Merci de bien vouloir renvoyer ce document corrigé depuis votre espace candidat, rubrique <strong>Documents</strong>.
                 Votre candidature restera en attente tant que le document ne sera pas validé.
             </p>
 
             <div style="text-align: center;">
-                <a href="{FRONTEND_URL}/demande-certification" style="display: inline-block; background: #0f172a; color: white; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 600;">
-                    Accéder au portail
+                <a href="{FRONTEND_URL}/candidat/login" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
+                    Accéder à mon espace candidat
                 </a>
             </div>
         </div>
