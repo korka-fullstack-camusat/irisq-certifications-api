@@ -12,7 +12,7 @@ Flow:
 
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
@@ -21,7 +21,7 @@ from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
 from database import get_database
-from email_service import notify_candidate_password_reset
+from email_service import notify_candidate_password_reset  # noqa: F401 (used inline too)
 from utils.security import SECRET_KEY, ALGORITHM, verify_password, get_password_hash
 
 
@@ -475,3 +475,90 @@ async def resubmit_document(
     )
     updated = await db["responses"].find_one({"_id": candidate["_id"]})
     return _serialize_response(updated)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Nouvelle candidature depuis l'espace candidat
+# ──────────────────────────────────────────────────────────────────────────────
+
+class NewApplicationIn(BaseModel):
+    certification: str
+    exam_mode: str = "online"   # "online" | "onsite"
+
+
+@router.post("/new-application", status_code=201)
+async def new_application(
+    payload: NewApplicationIn = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    candidate=Depends(get_current_candidate),
+):
+    """
+    Soumettre une nouvelle candidature depuis l'espace candidat connecté.
+
+    Le candidat choisit une certification ; le backend réutilise ses informations
+    personnelles et son public_id existant pour créer un nouveau dossier lié
+    au même compte (même identifiants de connexion).
+    """
+    db = get_database()
+    certification = payload.certification.strip()
+    if not certification:
+        raise HTTPException(status_code=400, detail="Nom de certification requis")
+
+    # Vérifier l'absence de candidature active pour cette certification
+    public_id = candidate.get("public_id")
+    existing = await db["responses"].find_one({
+        "public_id": public_id,
+        "answers.Certification souhaitée": certification,
+        "status": {"$nin": ["rejected"]},
+    })
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Vous avez déjà une candidature active pour « {certification} ».",
+        )
+
+    # Trouver le formulaire dont le titre correspond
+    form = await db["forms"].find_one({"title": certification})
+    form_id = str(form["_id"]) if form else None
+
+    now = datetime.utcnow()
+    name          = candidate.get("name") or ""
+    email         = candidate.get("email") or ""
+    password_hash = candidate.get("password_hash") or ""
+    session_token = candidate.get("session_token") or ""
+    exam_mode     = (payload.exam_mode or "online").strip().lower()
+
+    candidate_id = f"CAND-{secrets.token_hex(3).upper()}"
+    exam_token   = secrets.token_urlsafe(32)
+
+    response_doc = {
+        "form_id":        form_id,
+        "name":           name,
+        "email":          email,
+        "password_hash":  password_hash,
+        "session_token":  session_token,
+        "public_id":      public_id,
+        "candidate_id":   candidate_id,
+        "exam_token":     exam_token,
+        "exam_mode":      exam_mode,
+        "status":         "pending",
+        "must_change_password": False,
+        "answers": {"Certification souhaitée": certification},
+        "submitted_at":   now,
+    }
+
+    result = await db["responses"].insert_one(response_doc)
+    if form_id:
+        await db["forms"].update_one(
+            {"_id": form["_id"]},
+            {"$inc": {"responses_count": 1}, "$set": {"updated_at": now}},
+        )
+
+    created = await db["responses"].find_one({"_id": result.inserted_id})
+
+    # Notification email en arrière-plan
+    from email_service import notify_rh_new_submission, notify_candidate_submission_received
+    background_tasks.add_task(notify_rh_new_submission, candidate_id, name, certification)
+    background_tasks.add_task(notify_candidate_submission_received, email, name, public_id, certification, "")
+
+    return _serialize_response(created)
