@@ -774,22 +774,34 @@ async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body
             detail="Cette copie a déjà été soumise. Il vous est impossible de repasser cet examen."
         )
 
+    # ── Vérification de la deadline ───────────────────────────────────────────
+    certification_name = response_doc.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
+    exam_doc = await db["exams"].find_one({"certification": certification_name}, sort=[("created_at", -1)])
+
+    if exam_doc and exam_doc.get("deadline"):
+        try:
+            deadline_end = datetime.strptime(exam_doc["deadline"] + "T23:59:59", "%Y-%m-%dT%H:%M:%S")
+            if datetime.utcnow() > deadline_end:
+                raise HTTPException(
+                    status_code=403,
+                    detail="La date limite de cet examen est dépassée. Votre copie ne peut plus être soumise."
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Format inattendu → on laisse passer
+
     # Generate the PDF document from the answers
     generated_pdf_url = submission.exam_document
 
     try:
-        # We need the candidate's chosen certification from their answers
-        certification_name = response_doc.get("answers", {}).get("Certification souhaitée", "Non spécifiée")
-
         candidate_info = {
             "candidate_id": response_doc.get("candidate_id", f"CAND-{str(response_doc['_id'])[-6:].upper()}"),
             "certification": certification_name
         }
 
-        # We need the exam to get the original questions.
-        # The exam was created for this certification.
-        exam = await db["exams"].find_one({"certification": certification_name}, sort=[("created_at", -1)])
-        questions = exam.get("parsed_questions", []) if exam else []
+        # exam_doc déjà récupéré ci-dessus
+        questions = exam_doc.get("parsed_questions", []) if exam_doc else []
 
         if submission.exam_answers or submission.cheat_alerts:
             pdf_url = await generate_and_upload_candidate_pdf(
