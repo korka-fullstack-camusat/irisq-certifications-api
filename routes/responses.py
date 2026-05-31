@@ -293,6 +293,7 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
 @router.get("/responses/multi-candidatures", response_description="Candidats ayant postulé à plusieurs formations")
 async def list_multi_candidatures(
     session_id: Optional[str] = Query(None, description="Filtrer par session"),
+    min_count: int = Query(1, description="Nombre minimum de dossiers (1=tous, 2=multi seulement)"),
     current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
 ):
     """
@@ -326,7 +327,7 @@ async def list_multi_candidatures(
             "all_session_ids":     {"$addToSet": "$session_id"},
             "candidate_account_id": {"$first": "$candidate_account_id"},
         }},
-        {"$match": {"count": {"$gt": 1}}},
+        {"$match": {"count": {"$gte": min_count}}},
         {"$sort": {"email": 1}},
     ]
 
