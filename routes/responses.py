@@ -297,39 +297,65 @@ async def list_multi_candidatures(
     current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
 ):
     """
-    Retourne les candidats ayant soumis plus d'une candidature (toutes origines confondues :
-    formulaire public avec session ET espace candidat sans session).
+    Retourne les candidats et leurs dossiers.
 
-    Stratégie :
-    - Grouper par public_id SANS filtre session dans le $match initial.
-      Les dossiers portail (session_id=null) sont ainsi comptés dans le même groupe
-      que les dossiers traditionnels du même candidat.
-    - Si un filtre session est demandé, on l'applique APRÈS le groupement :
-      on garde les groupes dont au moins un dossier appartient à la session voulue.
+    Stratégie de groupement :
+    - min_count=1 (vue unifiée, défaut) : groupement par EMAIL pour inclure TOUS les
+      candidats, y compris ceux issus du formulaire public qui n'ont pas de public_id.
+    - min_count>=2 (multi-dossiers uniquement) : groupement par public_id pour ne
+      garder que les candidats ayant plusieurs dossiers liés à un même compte.
+
+    Dans les deux cas, le filtre session (si fourni) est appliqué APRÈS le groupement,
+    ce qui permet de conserver les dossiers portail (session_id=null) liés au même
+    candidat même quand un filtre de session est actif.
     """
     db = get_database()
 
     if session_id and not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="ID de session invalide")
 
-    # ── Aggrégation : grouper tous les dossiers par public_id ─────────────────
-    # Pas de filtre session_id ici — les dossiers portail (session_id=null)
-    # doivent être inclus dans le décompte.
-    pipeline = [
-        {"$match": {"public_id": {"$ne": None, "$exists": True}}},
-        {"$group": {
-            "_id": "$public_id",
-            "count":               {"$sum": 1},
-            "response_ids":        {"$push": {"$toString": "$_id"}},
-            "name":                {"$first": "$name"},
-            "email":               {"$first": "$email"},
-            "primary_session_id":  {"$first": "$session_id"},
-            "all_session_ids":     {"$addToSet": "$session_id"},
-            "candidate_account_id": {"$first": "$candidate_account_id"},
-        }},
-        {"$match": {"count": {"$gte": min_count}}},
-        {"$sort": {"email": 1}},
-    ]
+    # ── Aggrégation : stratégie selon min_count ──────────────────────────────
+    # • min_count = 1 (tout afficher) : on groupe par EMAIL pour inclure les
+    #   candidats du formulaire public sans public_id.
+    # • min_count >= 2 (multi-dossiers seulement) : on groupe par public_id
+    #   pour lier les dossiers du même compte candidat.
+    if min_count <= 1:
+        # Groupement par email : capture TOUS les candidats, y compris ceux
+        # qui ont soumis via le formulaire public sans créer de compte.
+        pipeline = [
+            {"$match": {"email": {"$ne": None, "$exists": True}}},
+            {"$group": {
+                "_id": "$email",
+                "count":               {"$sum": 1},
+                "response_ids":        {"$push": {"$toString": "$_id"}},
+                "name":                {"$first": "$name"},
+                "email":               {"$first": "$email"},
+                "primary_session_id":  {"$first": "$session_id"},
+                "all_session_ids":     {"$addToSet": "$session_id"},
+                "public_id":           {"$first": "$public_id"},
+                "candidate_account_id": {"$first": "$candidate_account_id"},
+            }},
+            {"$match": {"count": {"$gte": 1}}},
+            {"$sort": {"email": 1}},
+        ]
+    else:
+        # Groupement par public_id : dossiers multi-candidatures uniquement
+        # (les candidats sans public_id sont exclus de ce mode).
+        pipeline = [
+            {"$match": {"public_id": {"$ne": None, "$exists": True}}},
+            {"$group": {
+                "_id": "$public_id",
+                "count":               {"$sum": 1},
+                "response_ids":        {"$push": {"$toString": "$_id"}},
+                "name":                {"$first": "$name"},
+                "email":               {"$first": "$email"},
+                "primary_session_id":  {"$first": "$session_id"},
+                "all_session_ids":     {"$addToSet": "$session_id"},
+                "candidate_account_id": {"$first": "$candidate_account_id"},
+            }},
+            {"$match": {"count": {"$gte": min_count}}},
+            {"$sort": {"email": 1}},
+        ]
 
     groups = await db["responses"].aggregate(pipeline).to_list(500)
 
