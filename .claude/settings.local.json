@@ -105,7 +105,16 @@
       "Bash(cat requirements.txt)",
       "Bash(cat requirements*.txt)",
       "Bash(npx next *)",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('scripts',{}\\)\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('scripts',{}\\)\\)\")",
+      "Bash(where soffice *)",
+      "Bash(where \"soffice.exe\")",
+      "Bash(dir \"C:\\\\Program Files\\\\LibreOffice\\\\program\\\\soffice.exe\")",
+      "Bash(dir \"C:\\\\Program Files\\\\LibreOffice*\")",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\LibreOffice*\")",
+      "Read(//c/Users/akdiallo/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/fb544845-b11e-467a-ac9b-b7f2a568108b/d2476a86-ed4e-4fd0-86c6-f8b4e454ae87/skills/docx/**)",
+      "Bash(py scripts/office/extract-text \"C:\\\\Users\\\\akdiallo\\\\Downloads\\\\DOMICILIATION DE SALAIRE CDD.docx\")",
+      "Bash(py -c ' *)",
+      "Bash(py manage.py makemigrations hr_employees --name=\"add_attestation_request\")"
     ]
   }
 }
