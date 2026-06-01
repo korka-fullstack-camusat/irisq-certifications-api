@@ -288,6 +288,14 @@ async def create_response(form_id: str, response: ResponseCreate = Body(...), ba
         email_ok = notify_candidate_submission_received(
             candidate_email, candidate_name, public_id, certs_for_email, default_password,
         )
+        # Marquer l'email comme envoyé (ou non) pour le suivi
+        await db["responses"].update_one(
+            {"_id": new_response.inserted_id},
+            {"$set": {
+                "credentials_sent":    email_ok,
+                "credentials_sent_at": datetime.utcnow() if email_ok else None,
+            }}
+        )
         if not email_ok:
             print(
                 f"[WARN] L'email de confirmation n'a pas pu être envoyé à {candidate_email} "
