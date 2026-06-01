@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Body, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Optional
+from pydantic import BaseModel
 from database import get_database, get_fs
 from models.exam import ExamCreate
 from models.user import UserOut
@@ -202,10 +203,53 @@ async def delete_exam(id: str, current_user: UserOut = Depends(require_role(["RH
         
     raise HTTPException(status_code=404, detail=f"Exam {id} not found")
 
-@router.post("/exams/{id}/publish", response_description="Publish an exam and notify approved candidates")
+class PublishExamBody(BaseModel):
+    selected_response_ids: Optional[List[str]] = None  # None = tous les approuvés
+
+
+@router.get("/exams/{id}/candidates", response_description="Candidats validés pour cet examen")
+async def get_exam_candidates(
+    id: str,
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
+    """Retourne la liste des candidats approuvés pour la certification de cet examen."""
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid exam ID format")
+
+    exam = await db["exams"].find_one({"_id": ObjectId(id)})
+    if not exam:
+        raise HTTPException(status_code=404, detail=f"Exam {id} not found")
+
+    certification_name = exam.get("certification")
+    if not certification_name:
+        raise HTTPException(status_code=400, detail="Exam has no certification type")
+
+    approved = await db["responses"].find({
+        "status": "approved",
+        "answers.Certification souhaitée": certification_name,
+    }).to_list(1000)
+
+    result = []
+    for r in approved:
+        first_name = r.get("answers", {}).get("Prénom", "")
+        last_name  = r.get("answers", {}).get("Nom", "Candidat")
+        full_name  = f"{first_name} {last_name}".strip()
+        result.append({
+            "response_id": str(r["_id"]),
+            "public_id":   r.get("public_id", ""),
+            "name":        full_name,
+            "email":       r.get("email", ""),
+        })
+
+    return result
+
+
+@router.post("/exams/{id}/publish", response_description="Publish an exam and notify selected candidates")
 async def publish_exam(
     id: str,
     background_tasks: BackgroundTasks,
+    body: PublishExamBody = Body(default=PublishExamBody()),
     current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
 ):
     db = get_database()
@@ -220,22 +264,27 @@ async def publish_exam(
     if not certification_name:
         raise HTTPException(status_code=400, detail="Exam has no certification type")
 
-    # Find all approved responses for this certification
-    approved_responses = await db["responses"].find({
+    # Construire la requête : tous les approuvés OU seulement les sélectionnés
+    query: dict = {
         "status": "approved",
-        "answers.Certification souhaitée": certification_name
-    }).to_list(1000)
+        "answers.Certification souhaitée": certification_name,
+    }
+    selected_ids = body.selected_response_ids
+    if selected_ids:
+        valid_oids = [ObjectId(i) for i in selected_ids if ObjectId.is_valid(i)]
+        query["_id"] = {"$in": valid_oids}
+
+    approved_responses = await db["responses"].find(query).to_list(1000)
 
     notified_count = 0
-    frontend_url = FRONTEND_URL
+    frontend_url   = FRONTEND_URL
 
     for response in approved_responses:
         candidate_email = response.get("email")
-        public_id = response.get("public_id", "N/A")
-
+        public_id  = response.get("public_id", "N/A")
         first_name = response.get("answers", {}).get("Prénom", "")
-        last_name = response.get("answers", {}).get("Nom", "Candidat")
-        full_name = f"{first_name} {last_name}".strip()
+        last_name  = response.get("answers", {}).get("Nom", "Candidat")
+        full_name  = f"{first_name} {last_name}".strip()
 
         exam_token = response.get("exam_token")
         if not exam_token:
@@ -246,22 +295,21 @@ async def publish_exam(
             )
 
         candidat_link = f"{frontend_url}/candidat/login"
-        deadline = exam.get("deadline")
+        deadline      = exam.get("deadline")
 
         if candidate_email:
-            # Queue each email as a background task — the loop returns immediately
             background_tasks.add_task(
                 notify_candidate_exam_link,
-                to_email=candidate_email,
-                public_id=public_id,
-                candidate_name=full_name,
-                certification=certification_name,
-                candidat_link=candidat_link,
-                deadline=deadline,
+                to_email       = candidate_email,
+                public_id      = public_id,
+                candidate_name = full_name,
+                certification  = certification_name,
+                candidat_link  = candidat_link,
+                deadline       = deadline,
             )
             notified_count += 1
 
     return {
         "message": "Exam published successfully",
-        "notified_candidates_count": notified_count
+        "notified_candidates_count": notified_count,
     }
