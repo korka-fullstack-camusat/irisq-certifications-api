@@ -227,7 +227,10 @@ async def get_exam_candidates(
 
     approved = await db["responses"].find({
         "status": "approved",
-        "answers.Certification souhaitée": certification_name,
+        "$or": [
+            {"answers.Certification souhaitée": certification_name},
+            {"answers.Certification souhaitee": certification_name},
+        ],
     }).to_list(1000)
 
     result = []
@@ -267,7 +270,10 @@ async def publish_exam(
     # Construire la requête : tous les approuvés OU seulement les sélectionnés
     query: dict = {
         "status": "approved",
-        "answers.Certification souhaitée": certification_name,
+        "$or": [
+            {"answers.Certification souhaitée": certification_name},
+            {"answers.Certification souhaitee": certification_name},
+        ],
     }
     selected_ids = body.selected_response_ids
     if selected_ids:
