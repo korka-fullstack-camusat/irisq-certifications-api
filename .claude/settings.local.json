@@ -129,7 +129,8 @@
       "Bash(curl -s \"http://localhost:8040/api/templates/info\")",
       "Bash(curl -s -o /dev/null -w \"sims: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims\")",
       "Bash(curl -s -o /dev/null -w \"export-excel: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims/export-excel\")",
-      "Bash(grep -E \"\\\\.\\(py|js|ts\\)$\")"
+      "Bash(grep -E \"\\\\.\\(py|js|ts\\)$\")",
+      "Bash(python scripts/office/unpack.py \"C:\\\\Users\\\\akdiallo\\\\Downloads\\\\Modèle d'EXAMEN IMPLEMENTOR.docx\" unpacked_implementor/)"
     ]
   }
 }
