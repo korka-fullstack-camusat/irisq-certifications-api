@@ -295,10 +295,12 @@ async def publish_exam(
         exam_token = response.get("exam_token")
         if not exam_token:
             exam_token = secrets.token_urlsafe(32)
-            await db["responses"].update_one(
-                {"_id": response["_id"]},
-                {"$set": {"exam_token": exam_token}}
-            )
+        # Marquer ce candidat comme convoqué — c'est ce flag qui déverrouille
+        # l'accès à l'examen côté frontend (pas exam_token qui est généré dès la candidature)
+        await db["responses"].update_one(
+            {"_id": response["_id"]},
+            {"$set": {"exam_token": exam_token, "exam_convoked": True}}
+        )
 
         candidat_link = f"{frontend_url}/candidat/login"
         deadline      = exam.get("deadline")

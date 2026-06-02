@@ -48,6 +48,8 @@ def _serialize_response(doc: dict) -> dict:
         "exam_appreciation": doc.get("exam_appreciation"),
         "must_change_password": bool(doc.get("must_change_password", False)),
         "exam_token": doc.get("exam_token"),
+        # True uniquement si l'évaluateur a publié l'examen ET sélectionné ce candidat
+        "exam_convoked": bool(doc.get("exam_convoked", False)),
         # Champs de blocage d'examen — utilisés côté candidat pour détecter
         # si l'évaluateur a débloqué l'accès après un rechargement de page.
         "exam_blocked": doc.get("exam_blocked"),
