@@ -267,20 +267,24 @@ async def publish_exam(
     if not certification_name:
         raise HTTPException(status_code=400, detail="Exam has no certification type")
 
-    # Construire la requête : tous les approuvés OU seulement les sélectionnés
-    query: dict = {
-        "status": "approved",
-        "$or": [
-            {"answers.Certification souhaitée": certification_name},
-            {"answers.Certification souhaitee": certification_name},
-        ],
-    }
     selected_ids = body.selected_response_ids
-    if selected_ids:
-        valid_oids = [ObjectId(i) for i in selected_ids if ObjectId.is_valid(i)]
-        query["_id"] = {"$in": valid_oids}
 
-    approved_responses = await db["responses"].find(query).to_list(1000)
+    if selected_ids:
+        # L'évaluateur a sélectionné des candidats précis : chercher uniquement par _id
+        # (pas de filtre status/certification supplémentaire qui pourrait exclure des docs)
+        valid_oids = [ObjectId(i) for i in selected_ids if ObjectId.is_valid(i)]
+        approved_responses = await db["responses"].find(
+            {"_id": {"$in": valid_oids}}
+        ).to_list(1000)
+    else:
+        # Aucune sélection → tous les candidats approuvés pour cette certification
+        approved_responses = await db["responses"].find({
+            "status": "approved",
+            "$or": [
+                {"answers.Certification souhaitée": certification_name},
+                {"answers.Certification souhaitee": certification_name},
+            ],
+        }).to_list(1000)
 
     notified_count = 0
     frontend_url   = FRONTEND_URL
