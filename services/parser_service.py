@@ -485,37 +485,129 @@ def parse_exam_document(file_path: str) -> list:
 
 
 def parse_exam_text(raw_text: str) -> list:
-    """Parse un texte brut pour extraire des questions numérotées + options QCM."""
-    questions  = []
-    lines      = [line.strip() for line in raw_text.split("\n") if line.strip()]
-    current_part = "Examen"
-    current_q    = None
+    """
+    Parse un texte brut pour extraire des questions structurées.
+
+    Supporte deux formats :
+    - Format IRISQ  : Section X : ..., QCM : (pts), options avec □/☐
+    - Format standard : PARTIE X, options A./B./C./D.
+    """
+    questions    = []
+    lines        = [line.strip() for line in raw_text.split("\n") if line.strip()]
+    current_section    = ""   # "Section 1 : ..." ou "PARTIE 1"
+    current_subsection = ""   # "QCM : (25 points)" | "Questions Ouvertes" | ""
+    current_q          = None
+
+    # Détection auto du format IRISQ (options □ ou ☐)
+    is_irisq = any(re.search(r"[□☐◻▪]", l) for l in lines)
+
+    # ── Patterns ──────────────────────────────────────────────────────────────
+    # En-têtes de section
+    RE_SECTION  = re.compile(
+        r"^(Section\s+\d+|SECTION\s+\d+|PARTIE\s+\w+|Partie\s+\w+)"
+        r"[\s:–\-]*(.*)",
+        re.IGNORECASE,
+    )
+    # Sous-sections (QCM, Questions Ouvertes, Étude de cas…)
+    RE_SUBSEC   = re.compile(
+        r"^(QCM|Questions?\s+Ouvertes?|Étude\s+de\s+[Cc]as|Cas\s+Pratique|"
+        r"APPLICATION|Questions?\s+à\s+développer)\s*[:(]",
+        re.IGNORECASE,
+    )
+    # Question numérotée : "1.", "2)", "1 ."
+    RE_QUESTION = re.compile(r"^(\d{1,2})[.)]\s*(.+)", re.DOTALL)
+    # Options IRISQ : □ / ☐ / ◻ au début
+    RE_OPT_IRISQ = re.compile(r"^[□☐◻▪]\s*(.*)")
+    # Options standard : A. B. C. D. ou A) B) C) D)
+    RE_OPT_STD   = re.compile(r"^[A-Da-d][.)]\s+(.*)")
+    # "Justifiez votre/vos choix" → ajoute un champ libre après le QCM
+    RE_JUSTIF    = re.compile(r"^Justifi", re.IGNORECASE)
+    # Ligne à ignorer (entête doc, matricule, sujet…)
+    RE_SKIP      = re.compile(
+        r"^(N°\s*de\s*matricule|SUJET|Sujet\s+d.examen|Durée|Documents?\s+[Aa]utori|"
+        r"Référence|Session\s+d|Fiche\s+d.examen|Concepteur|Approbateur|Page\s+\d)",
+        re.IGNORECASE,
+    )
+
+    def _save_current():
+        if current_q:
+            questions.append(current_q)
+
+    def _new_q(line: str, q_type: str) -> dict:
+        return {
+            "id":               str(uuid.uuid4()),
+            "section":          current_section,
+            "subsection":       current_subsection,
+            "part":             current_section or current_subsection or "Examen",
+            "type":             q_type,
+            "text":             line,
+            "options":          [],
+            "has_justification": False,
+        }
 
     for line in lines:
-        if line.upper().startswith("PARTIE "):
-            current_part = line
+        # ── Lignes à ignorer ──
+        if RE_SKIP.match(line):
             continue
 
-        q_match  = re.match(r"^((?:\d+\.)|(?:Cas\s+\d+\s*:))\s*(.*)", line, re.IGNORECASE)
-        opt_match = re.match(r"^([A-D]\.)\s*(.*)", line)
+        # ── Entêtes de section ──
+        m_sec = RE_SECTION.match(line)
+        if m_sec:
+            _save_current()
+            current_q = None
+            current_section    = line
+            current_subsection = ""
+            continue
 
-        if q_match and "QCM" not in line:
-            if current_q:
-                questions.append(current_q)
-            q_type    = "qcm" if "QCM" in current_part.upper() else "open"
-            current_q = {
-                "id":      str(uuid.uuid4()),
-                "part":    current_part,
-                "type":    q_type,
-                "text":    line,
-                "options": [],
-            }
-        elif opt_match and current_q and current_q["type"] == "qcm":
-            current_q["options"].append(line)
-        elif current_q and not q_match and not opt_match and not line.upper().startswith("PARTIE "):
+        # ── Sous-sections (QCM, Questions Ouvertes…) ──
+        m_sub = RE_SUBSEC.match(line)
+        if m_sub:
+            _save_current()
+            current_q = None
+            current_subsection = line
+            continue
+
+        # ── Question numérotée ──
+        m_q = RE_QUESTION.match(line)
+        if m_q and "QCM" not in line.upper():
+            _save_current()
+            in_qcm = bool(re.search(r"QCM", current_subsection, re.IGNORECASE))
+            q_type = "qcm" if in_qcm else "open"
+            current_q = _new_q(line, q_type)
+            continue
+
+        # ── Options IRISQ (□) ──
+        m_irisq = RE_OPT_IRISQ.match(line)
+        if m_irisq and current_q:
+            opt_text = m_irisq.group(1).strip()
+            if opt_text:
+                current_q["options"].append(opt_text)
+                current_q["type"] = "qcm"   # confirme le type QCM
+            continue
+
+        # ── Options standard (A./B./C./D.) ──
+        m_std = RE_OPT_STD.match(line)
+        if m_std and current_q:
+            opt_text = m_std.group(1).strip()
+            if opt_text:
+                current_q["options"].append(opt_text)
+                current_q["type"] = "qcm"
+            continue
+
+        # ── "Justifiez votre/vos choix" ──
+        if RE_JUSTIF.match(line) and current_q:
+            current_q["has_justification"] = True
+            continue
+
+        # ── Continuation du texte de question ──
+        if current_q:
+            # Ignorer les lignes de points (……………)
+            if re.match(r"^[.\s…]{5,}$", line):
+                continue
+            # Ignorer les lignes de type "X points" isolées
+            if re.match(r"^\(?\d+[\.,]?\d*\s*points?\)?$", line, re.IGNORECASE):
+                continue
             current_q["text"] += "\n" + line
 
-    if current_q:
-        questions.append(current_q)
-
+    _save_current()
     return questions
