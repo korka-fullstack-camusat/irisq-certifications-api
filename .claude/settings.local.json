@@ -114,7 +114,22 @@
       "Read(//c/Users/akdiallo/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/fb544845-b11e-467a-ac9b-b7f2a568108b/d2476a86-ed4e-4fd0-86c6-f8b4e454ae87/skills/docx/**)",
       "Bash(py scripts/office/extract-text \"C:\\\\Users\\\\akdiallo\\\\Downloads\\\\DOMICILIATION DE SALAIRE CDD.docx\")",
       "Bash(py -c ' *)",
-      "Bash(py manage.py makemigrations hr_employees --name=\"add_attestation_request\")"
+      "Bash(py manage.py makemigrations hr_employees --name=\"add_attestation_request\")",
+      "PowerShell(docker exec erh-app-backend-web-1 apt-get install -y libreoffice-writer --no-install-recommends 2>&1)",
+      "PowerShell($body = '{\"username\":\"testuser\",\"password\":\"wrongpass\"}'; $headers = @{\"Content-Type\"=\"application/json\"}; try { Invoke-RestMethod -Uri \"http://localhost:8030/api/auth/login/\" -Method POST -Body $body -Headers $headers } catch { $_.Exception.Response.StatusCode.value__; $_.ErrorDetails.Message })",
+      "Bash(xargs cat)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8040/api/materiels/export-excel?cols=type,marque,statut\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8040/api/materiels\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8040/api/materiels/\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8040/api/materiels/export-excel?cols=type,marque\")",
+      "Bash(curl -s -o /dev/null -w \"export-excel: %{http_code}\\\\n\" \"http://localhost:8040/api/attributions/export-excel?cols=employe,service,materiel,statut\")",
+      "Bash(curl -s -o /dev/null -w \"list: %{http_code}\\\\n\" \"http://localhost:8040/api/attributions/\")",
+      "Bash(curl -s -o /dev/null -w \"templates/info: %{http_code}\\\\n\" \"http://localhost:8040/api/templates/info\")",
+      "Bash(curl -s -o /dev/null -w \"export-excel: %{http_code}\\\\n\" \"http://localhost:8040/api/attributions/export-excel?cols=employe,materiel,statut\")",
+      "Bash(curl -s \"http://localhost:8040/api/templates/info\")",
+      "Bash(curl -s -o /dev/null -w \"sims: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims\")",
+      "Bash(curl -s -o /dev/null -w \"export-excel: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims/export-excel\")",
+      "Bash(grep -E \"\\\\.\\(py|js|ts\\)$\")"
     ]
   }
 }
