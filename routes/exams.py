@@ -286,6 +286,17 @@ async def publish_exam(
             ],
         }).to_list(1000)
 
+    # ── Réinitialiser exam_convoked pour TOUS les candidats de cette certification ──
+    # Ceci garantit que si un ancien examen a été supprimé et un nouveau créé,
+    # seuls les candidats sélectionnés dans ce nouveau publish voient le bouton.
+    cert_filter = {
+        "$or": [
+            {"answers.Certification souhaitée": certification_name},
+            {"answers.Certification souhaitee":  certification_name},
+        ]
+    }
+    await db["responses"].update_many(cert_filter, {"$set": {"exam_convoked": False}})
+
     notified_count = 0
     frontend_url   = FRONTEND_URL
 
