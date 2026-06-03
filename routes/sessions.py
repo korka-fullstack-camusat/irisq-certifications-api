@@ -330,6 +330,17 @@ async def list_session_responses(
     current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR", "COMITE"])),
 ):
     db = get_database()
+
+    # ── session_id = "all" → retourner tous les approuvés toutes sessions confondues ──
+    if session_id == "all":
+        responses = (
+            await db["responses"]
+            .find({"status": "approved"})
+            .sort("submitted_at", -1)
+            .to_list(1000)
+        )
+        return [serialize(r) for r in responses]
+
     if not ObjectId.is_valid(session_id):
         raise HTTPException(status_code=400, detail="Invalid session ID")
     responses = (
