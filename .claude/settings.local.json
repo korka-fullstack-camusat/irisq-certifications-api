@@ -130,7 +130,8 @@
       "Bash(curl -s -o /dev/null -w \"sims: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims\")",
       "Bash(curl -s -o /dev/null -w \"export-excel: %{http_code}\\\\n\" \"http://localhost:8040/api/telephonie/sims/export-excel\")",
       "Bash(grep -E \"\\\\.\\(py|js|ts\\)$\")",
-      "Bash(python scripts/office/unpack.py \"C:\\\\Users\\\\akdiallo\\\\Downloads\\\\Modèle d'EXAMEN IMPLEMENTOR.docx\" unpacked_implementor/)"
+      "Bash(python scripts/office/unpack.py \"C:\\\\Users\\\\akdiallo\\\\Downloads\\\\Modèle d'EXAMEN IMPLEMENTOR.docx\" unpacked_implementor/)",
+      "PowerShell($content = [System.IO.File]::ReadAllBytes\\(\"C:\\\\AROKA-TECH\\\\IRISQ\\\\Backend\\\\irisqbackend\\\\services\\\\parser_service.py\"\\); $text = [System.Text.Encoding]::UTF8.GetString\\($content\\); $idx = $text.IndexOf\\(\"OPTION : cases\"\\); $text.Substring\\($idx, 400\\))"
     ]
   }
 }
