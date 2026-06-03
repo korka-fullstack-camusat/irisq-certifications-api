@@ -514,6 +514,14 @@ def _classify_line(line: str) -> str:
     ):
         return "SKIP"
 
+    # ── SUMMARY : barème récapitulatif — ne pas parser comme questions ──
+    if re.match(
+        r"^(Bar[eè]me\s+r[eé]capitulatif|R[eé]capitulatif|"
+        r"Total\s*:\s*\d+|TOTAL\s*:)",
+        line, re.IGNORECASE,
+    ):
+        return "SUMMARY"
+
     # ── JUSTIF : demande de justification ──
     if re.match(
         r"^(Justifi[ez]|Motivez|Expliquez\s+votre|Commenter|"
@@ -638,6 +646,13 @@ def parse_exam_text(raw_text: str) -> list:
 
         if kind in ("NOISE", "SKIP"):
             continue
+
+        # Barème récapitulatif → arrêter le parsing des questions
+        if kind == "SUMMARY":
+            _save()
+            current_q = None
+            # Ignorer tout le reste (barème ne fait pas partie du formulaire)
+            break
 
         if kind == "SECTION":
             _save()
