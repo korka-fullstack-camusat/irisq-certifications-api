@@ -621,8 +621,16 @@ def parse_exam_text(raw_text: str) -> list:
 
     def _opt_text(line: str) -> str:
         """Extrait le texte propre d'une ligne d'option."""
-        # Supprime le préfixe (□, A., (B), -, •…)
-        clean = re.sub(r"^([□☐○◦◻▪●•\-–]|[A-Ea-e][.)]|\([A-Ea-e]\))\s*", "", line)
+        # Supprime les caractères Wingdings/checkbox en début (ord F07F, F06F…)
+        clean = line
+        while clean and ord(clean[0]) in (
+            0xF07F, 0xF06F, 0xF0B7, 0xF0A7,
+            0x2022, 0x25A1, 0x2610, 0x25CF,
+            0x25E6, 0x25AA, 0x25CB, 0x25FB,
+        ):
+            clean = clean[1:]
+        # Supprime les préfixes textuels (A., (B), -, •…)
+        clean = re.sub(r"^([□☐○◦◻▪●•\-–]|[A-Ea-e][.)]|\([A-Ea-e]\))\s*", "", clean)
         return clean.strip()
 
     for line in lines:
@@ -646,7 +654,9 @@ def parse_exam_text(raw_text: str) -> list:
             _save()
             in_qcm = bool(re.search(r"QCM|Choix\s+multiple|MCQ|Vrai\s+ou",
                                      current_subsection, re.IGNORECASE))
-            current_q = _new_q(line, "qcm" if in_qcm else "open")
+            # Supprimer le préfixe numérique "1." / "1)" du texte brut
+            clean_text = re.sub(r"^(\d{1,2})[.)]\s*", "", line).strip()
+            current_q = _new_q(clean_text, "qcm" if in_qcm else "open")
             continue
 
         if kind == "OPTION" and current_q is not None:
