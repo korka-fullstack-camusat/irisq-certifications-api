@@ -489,18 +489,27 @@ def _classify_line(line: str) -> str:
     Classifie une ligne en catégorie : SKIP | SECTION | SUBSECTION |
     QUESTION | OPTION | JUSTIF | NOISE | TEXT
     """
-    # ── NOISE : lignes vides fonctionnelles, pointillés, numéros de page ──
+    # ── NOISE : pointillés, lignes garbled (encoding PDF), numéros de page ──
+    # Cas 1 : pointillés classiques
     if re.match(r"^[.\s…\-_]{5,}$", line):
         return "NOISE"
-    if re.match(r"^(Page\s+\d|^\d+\s*$)", line, re.IGNORECASE):
+    # Cas 2 : caractères de remplacement Unicode � (dots encodés dans PDFs IRISQ)
+    if len(line) >= 4 and sum(1 for c in line if c == "�") / len(line) > 0.5:
+        return "NOISE"
+    # Cas 3 : ligne ne contenant que des caractères non-ASCII répétés (garbled)
+    stripped = line.replace(" ", "")
+    if len(stripped) >= 5 and len(set(stripped)) <= 3 and not any(c.isalpha() for c in line):
+        return "NOISE"
+    if re.match(r"^(Page\s+\d|\d+\s*$)", line, re.IGNORECASE):
         return "NOISE"
 
-    # ── SKIP : métadonnées de document ──
+    # ── SKIP : métadonnées de document (avec variantes d'encodage) ──
     if re.match(
-        r"^(N°\s*de\s*matricule|SUJET\s*:|Sujet\s+d.examen|Dur[eé]e\s*:|"
-        r"Documents?\s+[Aa]utoris|R[eé]f[eé]rence\s*:|Session\s+d.examen|"
+        r"^(N.?\s*de\s*matricule|SUJET\s*:|Sujet\s+d.examen|Dur.e\s*:|"
+        r"Documents?\s+[Aa]utoris|R.f.rence\s*:|Session\s+d.examen|"
         r"Fiche\s+d.examen|Concepteur|Approbateur|Page\s+\d+\s+sur|"
-        r"PGE-|Module\s*:|Ressources\s+autoris|Niveau\s+de\s+comp)",
+        r"PGE-|Module\s*:|Ressources\s+autoris|Niveau\s+de\s+comp|"
+        r"Nom\s*:|Date\s*:|Signature)",
         line, re.IGNORECASE,
     ):
         return "SKIP"
@@ -536,8 +545,16 @@ def _classify_line(line: str) -> str:
         return "SUBSECTION"
 
     # ── OPTION : cases à cocher et lettres ──
-    # Checkbox (IRISQ, Unicode)
-    if re.match(r"^[□☐○◦◻▪●•]\s*.{1,}", line):
+    #  = caractère Wingdings checkbox utilisé dans les PDFs IRISQ (détecté par pdfplumber)
+    # □☐○◦◻▪●• = variantes Unicode classiques
+    # \uf07f = Wingdings checkbox in IRISQ PDFs, extracted as-is by pdfplumber
+    if line and ord(line[0]) in (
+        0xF07F, 0xF06F, 0xF0B7, 0xF0A7,  # Wingdings variants
+        0x2022, 0x25A1, 0x2610, 0x25CF,  # Unicode bullets/boxes
+        0x25E6, 0x25AA, 0x25CB, 0x25FB,
+    ):
+        return "OPTION"
+    if re.match(r"^[□☐○◦◻▪●•]\s*.{1,}", line):
         return "OPTION"
     # Lettres A-D/a-d ou (A)-(D)
     if re.match(r"^[A-Ea-e][.)]\s+.{2,}", line):
