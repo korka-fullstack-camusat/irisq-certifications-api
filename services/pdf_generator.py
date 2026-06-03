@@ -84,56 +84,147 @@ async def generate_and_upload_candidate_pdf(candidate_info: dict, questions: lis
     pdf.cell(pdf.epw, 10, "Réponses à l'Examen", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     
-    # Map questions for easy lookup by ID
+    # ── Maps pour la recherche ──────────────────────────────────────────────────
+    # q_map : id principal → question
     q_map = {q.get("id"): q for q in questions} if questions else {}
-    
-    if not answers:
+
+    # parts_map : part_id → (question_parente, part_data)
+    parts_map: dict = {}
+    for q in (questions or []):
+        for part in q.get("parts", []):
+            if part.get("id"):
+                parts_map[part["id"]] = (q, part)
+
+    # ── Regrouper les réponses par question parente ──────────────────────────
+    # Structure : { question_id: { "question": q_data, "direct": answer, "parts": {part_id: answer} } }
+    grouped: dict = {}
+
+    for ans in (answers or []):
+        q_id   = ans.get("question_id", "")
+        value  = ans.get("answer", "")
+
+        if q_id in q_map:
+            # Réponse directe à une question standard
+            if q_id not in grouped:
+                grouped[q_id] = {"question": q_map[q_id], "direct": "", "parts": {}}
+            grouped[q_id]["direct"] = value
+
+        else:
+            # Essayer de retrouver la question parente pour les réponses composées
+            # Format : "main_uuid_part_uuid"  (les deux UUIDs séparés par "_")
+            found = False
+            # Vérifier si le q_id commence par un main_id connu
+            for main_id, q_data in q_map.items():
+                if q_id.startswith(main_id + "_"):
+                    part_id = q_id[len(main_id) + 1:]
+                    if main_id not in grouped:
+                        grouped[main_id] = {"question": q_data, "direct": "", "parts": {}}
+                    grouped[main_id]["parts"][part_id] = value
+                    found = True
+                    break
+
+            if not found:
+                # Réponse orpheline (question supprimée ou format inconnu)
+                if q_id not in grouped:
+                    grouped[q_id] = {"question": {}, "direct": value, "parts": {}}
+                else:
+                    grouped[q_id]["direct"] = value
+
+    if not grouped:
         pdf.set_font("helvetica", "I", 10)
-        pdf.cell(pdf.epw, 10, "Aucune réponse soumise.", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(pdf.epw, 10, "Aucune reponse soumise.", new_x="LMARGIN", new_y="NEXT")
     else:
-        for i, ans in enumerate(answers, 1):
-            q_id = ans.get("question_id")
-            answer_text = sanitize_text(html_to_plain_text(ans.get("answer", "")))
-            
-            question_data = q_map.get(q_id, {})
-            question_text = sanitize_text(question_data.get("text", f"Question {i}"))
-            question_type = question_data.get("type", "open")
-            
-            # Print Question Title
+        # Trier par ordre d'apparition dans le document (questions)
+        q_order = [q.get("id") for q in (questions or [])]
+        sorted_ids = sorted(
+            grouped.keys(),
+            key=lambda k: q_order.index(k) if k in q_order else 9999
+        )
+
+        for i, q_id in enumerate(sorted_ids, 1):
+            entry    = grouped[q_id]
+            q_data   = entry["question"]
+            q_text   = sanitize_text(q_data.get("text", f"Question {i}"))
+            q_type   = q_data.get("type", "open")
+            parts    = q_data.get("parts", [])
+
+            # ── Titre de la question ──────────────────────────────────────
             pdf.set_font("helvetica", "B", 11)
-            pdf.set_text_color(26, 35, 126) # #1a237e (Dark Independant Blue)
+            pdf.set_text_color(26, 35, 126)
             pdf.cell(pdf.epw, 8, f"Question {i}", new_x="LMARGIN", new_y="NEXT")
-            
-            # Print Question Text
+
+            # ── Texte de la question ──────────────────────────────────────
             pdf.set_font("helvetica", "", 10)
-            pdf.set_text_color(0, 0, 0) # Black
-            pdf.multi_cell(pdf.epw, 6, question_text)
+            pdf.set_text_color(0, 0, 0)
+            pdf.multi_cell(pdf.epw, 6, q_text)
             pdf.ln(2)
-            
-            # Print Options if QCM (just to show context)
-            options = question_data.get("options", [])
+
+            # ── Options QCM (contexte) ────────────────────────────────────
+            options = q_data.get("options", [])
             if options:
                 pdf.set_font("helvetica", "I", 9)
-                pdf.set_text_color(100, 100, 100) # Gray
+                pdf.set_text_color(100, 100, 100)
                 for opt in options:
                     pdf.multi_cell(pdf.epw, 5, f" - {sanitize_text(opt)}")
                 pdf.ln(2)
-            
-            # Print candidate Answer Header
-            pdf.set_font("helvetica", "B", 10)
-            pdf.set_text_color(46, 125, 50) # #2e7d32 (Green)
-            pdf.cell(pdf.epw, 8, "Reponse du candidat :", new_x="LMARGIN", new_y="NEXT")
-            
-            # Print Candidate Answer Text
-            pdf.set_font("helvetica", "", 10)
-            if not answer_text.strip():
-                pdf.set_text_color(204, 0, 0) # Red
-                pdf.multi_cell(pdf.epw, 6, "Aucune réponse fournie.")
+
+            # ── Réponses ──────────────────────────────────────────────────
+            if q_type == "compound" and parts:
+                # Questions composées Vrai/Faux : afficher chaque sous-partie
+                for part in parts:
+                    part_id    = part.get("id", "")
+                    part_label = sanitize_text(part.get("label", ""))
+                    part_type  = part.get("type", "open")
+                    part_value = entry["parts"].get(part_id, "")
+
+                    # Label de la sous-question
+                    pdf.set_font("helvetica", "B", 9)
+                    pdf.set_text_color(70, 70, 70)
+                    pdf.cell(pdf.epw, 6, part_label, new_x="LMARGIN", new_y="NEXT")
+
+                    # Réponse
+                    pdf.set_font("helvetica", "", 10)
+                    if part_type == "vraifaux":
+                        # Afficher Vrai/Faux avec couleur
+                        if part_value == "Vrai":
+                            pdf.set_text_color(46, 125, 50)  # vert
+                            pdf.set_fill_color(232, 245, 233)
+                            pdf.cell(pdf.epw, 7, "  Vrai", border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
+                        elif part_value == "Faux":
+                            pdf.set_text_color(198, 40, 40)  # rouge
+                            pdf.set_fill_color(255, 235, 238)
+                            pdf.cell(pdf.epw, 7, "  Faux", border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
+                        else:
+                            pdf.set_text_color(204, 0, 0)
+                            pdf.multi_cell(pdf.epw, 6, "Non repondu.")
+                    else:
+                        # Réponse texte libre
+                        clean = sanitize_text(html_to_plain_text(part_value))
+                        if clean.strip():
+                            pdf.set_text_color(0, 0, 0)
+                            pdf.set_fill_color(248, 249, 250)
+                            pdf.multi_cell(pdf.epw, 6, clean, border=1, fill=True)
+                        else:
+                            pdf.set_text_color(204, 0, 0)
+                            pdf.multi_cell(pdf.epw, 6, "Aucune reponse fournie.")
+                    pdf.ln(2)
+
             else:
-                pdf.set_text_color(0, 0, 0)
-                pdf.set_fill_color(248, 249, 250) # Very light gray/bg
-                pdf.multi_cell(pdf.epw, 6, answer_text, border=1, fill=True)
-                
+                # Question standard (QCM ou ouverte)
+                pdf.set_font("helvetica", "B", 10)
+                pdf.set_text_color(46, 125, 50)
+                pdf.cell(pdf.epw, 8, "Reponse du candidat :", new_x="LMARGIN", new_y="NEXT")
+
+                answer_text = sanitize_text(html_to_plain_text(entry["direct"]))
+                pdf.set_font("helvetica", "", 10)
+                if not answer_text.strip():
+                    pdf.set_text_color(204, 0, 0)
+                    pdf.multi_cell(pdf.epw, 6, "Aucune reponse fournie.")
+                else:
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_fill_color(248, 249, 250)
+                    pdf.multi_cell(pdf.epw, 6, answer_text, border=1, fill=True)
+
             pdf.ln(8)
             
 
