@@ -545,6 +545,8 @@ def _classify_line(line: str) -> str:
         r"^(QCM|Q\.C\.M\.|Choix\s+[Mm]ultiple[s]?|"
         r"Questions?\s+[Oo]uvertes?|Questions?\s+[Rr][eé]dactionnelles?|"
         r"Questions?\s+[Àà]\s+d[eé]velopper|"
+        r"Questions?\s+Vrai\s*[/\\]\s*Faux|"       # "Questions Vrai/Faux"
+        r"Vrai\s*[/\\]\s*Faux|"                     # "Vrai/Faux" seul
         r"[EÉ]tude\s+de\s+[Cc]as|Cas\s+[Pp]ratique|"
         r"Travail\s+[Àà]\s+[Ff]aire|APPLICATION|"
         r"Vrai\s+[Oo]u\s+[Ff]aux|True\s+or\s+False)",
@@ -591,28 +593,34 @@ def parse_exam_text(raw_text: str) -> list:
     Parse universel : s'adapte automatiquement à tout template d'examen.
 
     Formats supportés (non exhaustif) :
-      IRISQ    – Section X :, QCM : (pts), options □/☐
-      Standard – PARTIE X, options A./B./C./D.
-      Français – Questions Ouvertes, Étude de cas
-      Anglais  – MCQ, True or False, Case Study
-      Libre    – numérotation 1./2./3., tirets, puces…
-
-    Retourne [] si aucune question n'est détectable →
-    le frontend bascule en mode blocs de réponse libres.
+      IRISQ Implementor  – Section X :, QCM : (pts), options □/☐
+      IRISQ Lead         – Questions Vrai/Faux, sous-questions a/b/c + Vrai ☐ Faux ☐
+      Standard           – PARTIE X, options A./B./C./D.
+      Questions Ouvertes – questions rédactionnelles
+      Libre              – numérotation 1./2./3.
     """
     questions          = []
     lines              = [l.strip() for l in raw_text.split("\n") if l.strip()]
     current_section    = ""
     current_subsection = ""
     current_q: dict | None = None
+    # Pour les questions composées Vrai/Faux
+    in_vraifaux_section = False
+    current_part: dict | None = None   # sous-question courante (a/b/c)
 
     def _save():
-        nonlocal current_q
+        nonlocal current_q, current_part
         if current_q:
-            # Post-traitement : si ≥ 2 options → QCM (même sans label)
-            if len(current_q.get("options", [])) >= 2:
-                current_q["type"] = "qcm"
-            questions.append(current_q)
+            q = current_q
+            # Finaliser la dernière sous-question si composée
+            if current_part and q.get("type") == "compound":
+                if current_part not in q["parts"]:
+                    q["parts"].append(current_part)
+            current_part = None
+            # Post-traitement QCM : si ≥ 2 options → confirmer type qcm
+            if q.get("type") not in ("compound",) and len(q.get("options", [])) >= 2:
+                q["type"] = "qcm"
+            questions.append(q)
             current_q = None
 
     def _new_q(text: str, qtype: str = "open") -> dict:
@@ -624,6 +632,7 @@ def parse_exam_text(raw_text: str) -> list:
             "type":              qtype,
             "text":              text,
             "options":           [],
+            "parts":             [],      # sous-questions pour les composées
             "has_justification": False,
         }
 
@@ -658,38 +667,88 @@ def parse_exam_text(raw_text: str) -> list:
             _save()
             current_section    = line
             current_subsection = ""
+            in_vraifaux_section = False
             continue
 
         if kind == "SUBSECTION":
             _save()
-            current_subsection = line
+            current_subsection  = line
+            # Détecter section Vrai/Faux
+            in_vraifaux_section = bool(re.search(
+                r"Vrai\s*/\s*Faux|Vraifaux|True\s*/\s*False",
+                line, re.IGNORECASE
+            ))
             continue
 
         if kind == "QUESTION":
             _save()
-            in_qcm = bool(re.search(r"QCM|Choix\s+multiple|MCQ|Vrai\s+ou",
-                                     current_subsection, re.IGNORECASE))
-            # Supprimer le préfixe numérique "1." / "1)" du texte brut
             clean_text = re.sub(r"^(\d{1,2})[.)]\s*", "", line).strip()
-            current_q = _new_q(clean_text, "qcm" if in_qcm else "open")
+            if in_vraifaux_section:
+                # Question composée : main text + sous-questions a/b/c à venir
+                current_q   = _new_q(clean_text, "compound")
+                current_part = None
+            else:
+                in_qcm = bool(re.search(r"QCM|Choix\s+multiple|MCQ",
+                                         current_subsection, re.IGNORECASE))
+                current_q   = _new_q(clean_text, "qcm" if in_qcm else "open")
+                current_part = None
+            continue
+
+        # ── Ligne "Vrai ☐ Faux ☐" → marquer la sous-question courante comme vraifaux ──
+        if re.match(r"^Vrai\s*[☐□]", line, re.IGNORECASE) and current_q is not None:
+            if current_q.get("type") == "compound" and current_part:
+                current_part["type"] = "vraifaux"
+            continue
+
+        # ── Sous-questions a. / b. / c. dans une question composée ──
+        sub_match = re.match(r"^([a-e])[.)]\s+(.+)", line) if current_q else None
+        if sub_match and current_q and current_q.get("type") == "compound":
+            # Sauvegarder la sous-question précédente
+            if current_part:
+                current_q["parts"].append(current_part)
+            label_letter = sub_match.group(1)
+            label_text   = sub_match.group(2).strip()
+            current_part = {
+                "id":    str(uuid.uuid4()),
+                "label": f"{label_letter}. {label_text}",
+                "type":  "open",
+            }
+            continue
+
+        # ── "Justifier votre réponse" dans une sous-question composée ──
+        if kind == "JUSTIF" and current_q is not None:
+            if current_q.get("type") == "compound" and current_part:
+                # C'est le label d'une sous-question "Justifier"
+                if current_part:
+                    current_q["parts"].append(current_part)
+                current_part = {
+                    "id":    str(uuid.uuid4()),
+                    "label": line,
+                    "type":  "open",
+                }
+            else:
+                current_q["has_justification"] = True
             continue
 
         if kind == "OPTION" and current_q is not None:
-            opt = _opt_text(line)
-            if opt:
-                current_q["options"].append(opt)
+            if current_q.get("type") != "compound":
+                opt = _opt_text(line)
+                if opt:
+                    current_q["options"].append(opt)
             continue
 
-        if kind == "JUSTIF" and current_q is not None:
-            current_q["has_justification"] = True
-            continue
-
-        # TEXT : continuation de la question ou ligne orpheline
+        # TEXT : continuation du texte de question
         if current_q is not None:
-            # Ignorer les valeurs de points isolées : "(2,5 points)"
             if re.match(r"^\(?\d+[\.,]?\d*\s*points?\)?\.?$", line, re.IGNORECASE):
                 continue
-            current_q["text"] += "\n" + line
+            # Dans une question composée, le texte continue la question principale
+            if current_q.get("type") == "compound" and not current_part:
+                current_q["text"] += "\n" + line
+            elif current_q.get("type") != "compound":
+                current_q["text"] += "\n" + line
 
+    # Sauvegarder la dernière sous-question si composée
+    if current_q and current_q.get("type") == "compound" and current_part:
+        current_q["parts"].append(current_part)
     _save()
     return questions
