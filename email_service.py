@@ -21,6 +21,12 @@ RH_EMAIL        = os.getenv("RH_EMAIL", "")
 EVALUATOR_EMAIL = os.getenv("EVALUATOR_EMAIL", "")
 RH_EMAILS: list[str] = [e.strip() for e in RH_EMAIL.split(",") if e.strip()]
 
+# ── Destinataires notifications examen ───────────────────────────────────────
+EXAM_NOTIFICATION_EMAILS: list[str] = [
+    "agnideobed.assogba@irisq.sn",
+    "ak.mahrez@gmail.com",
+]
+
 # ── URL du frontend ──────────────────────────────────────────────────────────
 # En local  : FRONTEND_URL=http://localhost:3000  (dans .env)
 # En prod   : FRONTEND_URL=https://www.irisq-certifications.online  (Render dashboard)
@@ -826,3 +832,87 @@ def notify_candidate_exam_unblocked(to_email: str, candidate_name: str, public_i
     </div>
     """
     send_email(to_email, subject, html_body)
+
+
+def notify_exam_started(public_id: str, candidate_name: str, certification: str):
+    """Notifie l evaluateur et le jury qu un candidat vient de demarrer son examen."""
+    subject = f"Examen demarre - {public_id} - {certification}"
+    html_body = f"""
+    <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
+        <div style="text-align:center;margin-bottom:24px;">
+            <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">IRISQ-CERTIFICATION</div>
+        </div>
+        <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#e8f5e9;border-radius:50%;">
+                    <span style="font-size:28px;">&#9654;</span>
+                </div>
+            </div>
+            <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 16px;">Examen demarre</h2>
+            <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
+                Le candidat <strong>{candidate_name}</strong> vient de demarrer son epreuve technique.
+            </p>
+            <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #e2e8f0;">
+                <table style="width:100%;font-size:14px;border-collapse:collapse;">
+                    <tr>
+                        <td style="padding:8px 0;color:#64748b;font-weight:600;">ID Candidat</td>
+                        <td style="padding:8px 0;color:#1a237e;font-weight:700;font-family:monospace;text-align:right;">{public_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 0;color:#64748b;font-weight:600;border-top:1px solid #e2e8f0;">Certification</td>
+                        <td style="padding:8px 0;color:#0f172a;font-weight:700;text-align:right;border-top:1px solid #e2e8f0;">{certification}</td>
+                    </tr>
+                </table>
+            </div>
+            <div style="text-align:center;">
+                <a href="{FRONTEND_URL}/evaluateur/corrections" style="display:inline-block;background:#1a237e;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
+                    Acceder aux corrections
+                </a>
+            </div>
+        </div>
+        <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:20px;">&#169; IRISQ</p>
+    </div>
+    """
+    send_email_multi(EXAM_NOTIFICATION_EMAILS, subject, html_body)
+
+
+def notify_exam_finished(public_id: str, candidate_name: str, certification: str):
+    """Notifie l evaluateur et le jury qu un candidat vient de terminer son examen."""
+    subject = f"Examen termine - {public_id} - {certification}"
+    html_body = f"""
+    <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto;background:#f4f6f9;padding:32px 16px;">
+        <div style="text-align:center;margin-bottom:24px;">
+            <div style="color:#1a237e;font-weight:800;font-size:12px;letter-spacing:0.25em;text-transform:uppercase;">IRISQ-CERTIFICATION</div>
+        </div>
+        <div style="background:white;border-radius:16px;padding:32px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#e3f2fd;border-radius:50%;">
+                    <span style="font-size:28px;">&#10003;</span>
+                </div>
+            </div>
+            <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 16px;">Examen termine - Copie soumise</h2>
+            <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
+                Le candidat <strong>{candidate_name}</strong> a termine son epreuve et soumis sa copie. Elle est disponible pour correction.
+            </p>
+            <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #e2e8f0;">
+                <table style="width:100%;font-size:14px;border-collapse:collapse;">
+                    <tr>
+                        <td style="padding:8px 0;color:#64748b;font-weight:600;">ID Candidat</td>
+                        <td style="padding:8px 0;color:#1a237e;font-weight:700;font-family:monospace;text-align:right;">{public_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 0;color:#64748b;font-weight:600;border-top:1px solid #e2e8f0;">Certification</td>
+                        <td style="padding:8px 0;color:#0f172a;font-weight:700;text-align:right;border-top:1px solid #e2e8f0;">{certification}</td>
+                    </tr>
+                </table>
+            </div>
+            <div style="text-align:center;">
+                <a href="{FRONTEND_URL}/evaluateur/corrections" style="display:inline-block;background:#2e7d32;color:white;padding:13px 36px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:700;">
+                    Voir la copie
+                </a>
+            </div>
+        </div>
+        <p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:20px;">&#169; IRISQ</p>
+    </div>
+    """
+    send_email_multi(EXAM_NOTIFICATION_EMAILS, subject, html_body)

@@ -22,6 +22,7 @@ from email_service import (
     notify_candidate_submission_received,
     notify_candidate_document_issue,
     notify_candidate_exam_unblocked,
+    notify_exam_finished,
 )
 from services.pdf_generator import generate_and_upload_candidate_pdf
 from utils.audit import log_action
@@ -837,6 +838,13 @@ async def submit_exam_with_anticheat(id: str, submission: AntiCheatUpdate = Body
 
     if updated.matched_count == 1:
         updated_response = await db["responses"].find_one(query)
+
+        # ── Notification fin d'examen (évaluateur + jury) ──
+        public_id_val  = response_doc.get("public_id", "N/A")
+        name_val       = response_doc.get("name", "Candidat")
+        cert_val       = (response_doc.get("answers") or {}).get("Certification souhaitée", "Non spécifiée")
+        background_tasks.add_task(notify_exam_finished, public_id_val, name_val, cert_val)
+
         return serialize_doc(updated_response)
 
     raise HTTPException(status_code=404, detail=f"Response {id} not found")

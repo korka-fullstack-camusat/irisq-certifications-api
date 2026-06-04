@@ -21,7 +21,7 @@ from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
 from database import get_database, get_fs
-from email_service import notify_candidate_password_reset  # noqa: F401 (used inline too)
+from email_service import notify_candidate_password_reset, notify_exam_started  # noqa: F401
 from utils.security import SECRET_KEY, ALGORITHM, verify_password, get_password_hash
 
 
@@ -641,3 +641,20 @@ async def new_application(
     background_tasks.add_task(notify_candidate_submission_received, email, name, public_id, certification, "")
 
     return _serialize_response(created)
+
+
+# ─── Notification démarrage examen ───────────────────────────────────────────
+
+@router.post("/exam/start", status_code=200)
+async def notify_exam_start(
+    background_tasks: BackgroundTasks,
+    candidate=Depends(get_current_candidate),
+):
+    """Appelé par le frontend quand le candidat démarre réellement l'examen.
+    Envoie une notification à l'évaluateur et au jury."""
+    public_id     = candidate.get("public_id", "N/A")
+    name          = candidate.get("name", "Candidat")
+    certification = (candidate.get("answers") or {}).get("Certification souhaitée", "Non spécifiée")
+
+    background_tasks.add_task(notify_exam_started, public_id, name, certification)
+    return {"message": "notification sent"}
