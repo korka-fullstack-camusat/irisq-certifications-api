@@ -850,7 +850,7 @@ def notify_exam_started(public_id: str, candidate_name: str, certification: str)
             </div>
             <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 16px;">Examen demarre</h2>
             <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
-                Le candidat <strong>{candidate_name}</strong> vient de demarrer son epreuve technique.
+                Un candidat vient de demarrer son epreuve technique.
             </p>
             <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #e2e8f0;">
                 <table style="width:100%;font-size:14px;border-collapse:collapse;">
@@ -892,7 +892,7 @@ def notify_exam_finished(public_id: str, candidate_name: str, certification: str
             </div>
             <h2 style="color:#1a237e;font-size:20px;font-weight:800;text-align:center;margin:0 0 16px;">Examen termine - Copie soumise</h2>
             <p style="color:#475569;font-size:14px;line-height:1.7;text-align:center;margin:0 0 24px;">
-                Le candidat <strong>{candidate_name}</strong> a termine son epreuve et soumis sa copie. Elle est disponible pour correction.
+                Un candidat a termine son epreuve et soumis sa copie. Elle est disponible pour correction.
             </p>
             <div style="background:#f8fafc;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #e2e8f0;">
                 <table style="width:100%;font-size:14px;border-collapse:collapse;">
