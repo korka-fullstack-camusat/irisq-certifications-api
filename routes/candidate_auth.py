@@ -643,6 +643,22 @@ async def new_application(
     return _serialize_response(created)
 
 
+# ── Notification : début d'examen ─────────────────────────────────────────────
+@router.post("/exam/notify-start", status_code=200)
+async def notify_exam_start(candidate=Depends(get_current_candidate)):
+    """Appelé par le frontend dès que le candidat démarre l'examen.
+    Envoie un email de notification à l'évaluateur et au jury."""
+    from email_service import notify_exam_started
+    db     = get_database()
+    resp   = await db["responses"].find_one({"_id": candidate["_id"]})
+    name   = resp.get("name", "Candidat") if resp else "Candidat"
+    pub_id = resp.get("public_id", candidate.get("public_id", "?")) if resp else "?"
+    cert   = (resp.get("answers") or {}).get("Certification souhaitée", "?") if resp else "?"
+
+    notify_exam_started(pub_id, name, cert)
+    return {"ok": True}
+
+
 # ─── Notification démarrage examen ───────────────────────────────────────────
 
 @router.post("/exam/start", status_code=200)
