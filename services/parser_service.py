@@ -38,6 +38,112 @@ def _extract_pdf_page_text(page) -> str:
     return filtered.extract_text() or ""
 
 
+def _filtered_page_tables(page) -> list:
+    """Tableaux d'une page PDF, en filtrant d'abord les espaces fantômes (cf. ci-dessus)."""
+    filtered = page.filter(
+        lambda obj: not (
+            obj.get("object_type") == "char"
+            and obj.get("text") == " "
+            and obj.get("width", 1) == 0
+        )
+    )
+    try:
+        return filtered.extract_tables() or []
+    except Exception:
+        return []
+
+
+def _extract_case_study_table_html(pdf) -> str | None:
+    """
+    Reconstruit fidèlement, en HTML, le tableau à compléter d'une étude de cas
+    de type "Travail à faire" (ex : Section "Maîtrise des risques des SMQ" —
+    colonnes Activité / Risque / Cause / Impact / P / G / C / Actions de maîtrise /
+    Critère d'efficacité).
+
+    Le texte linéarisé de pdfplumber casse complètement la mise en page de ce genre
+    de tableau (cellules vides perdues, noms d'activités éclatés ligne par ligne…).
+    On utilise donc l'extraction structurée `extract_tables()` — bien plus fiable
+    pour ce cas — et on reconstitue : ligne d'en-têtes + une ligne par activité
+    (nom pré-rempli, cellules vides à compléter par le candidat), exactement comme
+    affiché dans le document source, y compris lorsque le tableau s'étale sur
+    plusieurs pages.
+    """
+    HEADER_KEYWORDS = ["activit", "risque", "cause", "impact", "actions de ma", "crit"]
+    headers: list[str] | None = None
+    activities: list[str] = []
+    header_page_idx: int | None = None
+
+    def _join_wrapped(text: str) -> str:
+        """
+        Recolle un nom d'activité affiché sur plusieurs lignes dans une cellule étroite
+        (ex: 'La\\nReception\\ndes\\nPatients' → 'La Reception des Patients'). Les retours
+        à la ligne correspondent presque toujours à des mots séparés ; dans de rares cas
+        un mot est coupé en milieu ('Consultatio'+'n des'), ce qui laisse une espace en
+        trop — un compromis bien plus lisible qu'une concaténation hasardeuse erronée.
+        """
+        return re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
+
+    for page_idx, page in enumerate(pdf.pages):
+        # Arrêter dès qu'on franchit l'en-tête de la section suivante
+        if headers is not None and page_idx != header_page_idx:
+            page_text = _extract_pdf_page_text(page)
+            if re.search(r"^\s*Section\s+\d", page_text, re.IGNORECASE | re.MULTILINE):
+                break
+
+        for table in _filtered_page_tables(page):
+            for row in table:
+                cells = [(c or "").strip() for c in row]
+                joined = " ".join(cells).lower()
+
+                # Ligne d'en-têtes du tableau d'activités à risques
+                if headers is None and all(k in joined for k in HEADER_KEYWORDS):
+                    headers = []
+                    for c in cells:
+                        c = _join_wrapped(c)
+                        if c and c not in headers:
+                            headers.append(c)
+                    header_page_idx = page_idx
+                    continue
+
+                # Une fois l'en-tête trouvé : lignes "Activité" (1ère cellule renseignée,
+                # le reste vide — colonnes à compléter par le candidat)
+                if headers is not None:
+                    first = cells[0] if cells else ""
+                    rest_empty = all(not c for c in cells[1:])
+                    if (
+                        first and rest_empty
+                        and not re.match(r"^(Page\s+\d|R[ée]f[ée]rence|Fiche\s+d|Implementor|Lead|Junior)", first, re.IGNORECASE)
+                    ):
+                        activities.append(_join_wrapped(first))
+
+    if not headers or not activities:
+        return None
+
+    thead = "".join(
+        f"<th style='border:1px solid #c7cbe0;padding:6px 8px;background:#e8eaf6;"
+        f"font-size:0.78em;font-weight:700;color:#1a237e;text-align:left'>{_escape(h)}</th>"
+        for h in headers
+    )
+    tbody = ""
+    for activity in activities:
+        cells_html = (
+            f"<td style='border:1px solid #c7cbe0;padding:8px;font-weight:700;"
+            f"vertical-align:top;background:#fafbff'>{_escape(activity)}</td>"
+        )
+        cells_html += "".join(
+            "<td style='border:1px solid #c7cbe0;padding:8px;min-width:64px'>&nbsp;</td>"
+            for _ in headers[1:]
+        )
+        tbody += f"<tr>{cells_html}</tr>"
+
+    return (
+        "<div style='overflow-x:auto;margin-top:10px'>"
+        "<table style='border-collapse:collapse;width:100%;font-size:0.85em'>"
+        f"<thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>"
+        "</div>"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilitaires communs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -484,11 +590,13 @@ def parse_exam_document(file_path: str) -> list:
 
     ext = os.path.splitext(file_path)[1].lower()
     raw_text = ""
+    case_study_table_html = None
 
     try:
         if ext == ".pdf":
             with pdfplumber.open(file_path) as pdf:
                 raw_text = "\n".join(_extract_pdf_page_text(page) for page in pdf.pages)
+                case_study_table_html = _extract_case_study_table_html(pdf)
         elif ext in (".doc", ".docx"):
             doc = Document(file_path)
             raw_text = "\n".join(p.text for p in doc.paragraphs)
@@ -501,7 +609,7 @@ def parse_exam_document(file_path: str) -> list:
         print(f"[parse_exam_document] Erreur lecture : {e}")
         return []
 
-    return parse_exam_text(raw_text)
+    return parse_exam_text(raw_text, case_study_table_html=case_study_table_html)
 
 
 def _classify_line(line: str) -> str:
@@ -608,7 +716,7 @@ def _classify_line(line: str) -> str:
     return "TEXT"
 
 
-def parse_exam_text(raw_text: str) -> list:
+def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> list:
     """
     Parse universel : s'adapte automatiquement à tout template d'examen.
 
@@ -709,6 +817,8 @@ def parse_exam_text(raw_text: str) -> list:
                 _save()
                 current_subsection = line
                 current_q          = _new_q(line, "open")
+                if case_study_table_html:
+                    current_q["table_html"] = case_study_table_html
                 current_part       = None
                 collecting_travail = True
                 current_context    = ""
