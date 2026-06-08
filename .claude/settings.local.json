@@ -167,7 +167,13 @@
       "Bash(grep -n \"Chargement de la copie\\\\|exam_document\\\\|exam_answers\\\\|document_url\\\\|iframe\\\\|<embed\\\\|object\\\\|render\\\\|Blob\\\\|fetch\\\\|useEffect\\\\|copyContent\\\\|content\\\\b\" \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Backend\\\\irisqbackend\\\\..\\\\..\\\\Frontend\\\\irisqfrontend\\\\src\\\\components\\\\AnnotatedCopyModal.tsx\" | head -80)",
       "Bash(..venvScriptspython.exe -c ' *)",
       "Bash(Get-ChildItem -ErrorAction SilentlyContinue)",
-      "Bash(./.venv/Scripts/python.exe -c ' *)"
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Bash(tasklist)",
+      "Bash(netstat -ano)",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -match 'python|uvicorn' } | Select-Object Id,ProcessName,Path,StartTime | Format-Table -AutoSize)",
+      "Bash(git check-ignore *)",
+      "Bash(xargs -I{} git show {}:services/parser_service.py)",
+      "Bash(git rev-list *)"
     ]
   }
 }
