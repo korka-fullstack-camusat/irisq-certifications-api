@@ -567,9 +567,9 @@ def _classify_line(line: str) -> str:
     if re.match(r"^[□☐○◦◻▪●•]\s*.{1,}", line):
         return "OPTION"
     # Lettres A-D/a-d ou (A)-(D)
-    if re.match(r"^[A-Ea-e][.)]\s+.{2,}", line):
+    if re.match(r"^[A-Ea-e][.)]\s+.{1,}", line):
         return "OPTION"
-    if re.match(r"^\([A-Ea-e]\)\s+.{2,}", line):
+    if re.match(r"^\([A-Ea-e]\)\s+.{1,}", line):
         return "OPTION"
     # Tirets et puces introduisant une réponse courte (< 120 chars)
     if re.match(r"^[-–•]\s+.{2,}", line) and len(line) < 120:

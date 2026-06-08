@@ -916,3 +916,56 @@ def notify_exam_finished(public_id: str, candidate_name: str, certification: str
     </div>
     """
     send_email_multi(EXAM_NOTIFICATION_EMAILS, subject, html_body)
+
+
+def notify_candidate_data_deleted(to_email: str, candidate_name: str, public_id: str, certification: str):
+    """Informe un candidat que son dossier a ete supprime dans le cadre d une maintenance de la plateforme."""
+    subject = f"Maintenance de la plateforme — suppression de votre dossier {public_id}"
+    html_body = f"""
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
+        <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="display: inline-block; background: #0f172a; color: white; font-weight: bold; padding: 8px 16px; border-radius: 8px; font-size: 14px; letter-spacing: 0.5px;">
+                    IRISQ CERTIFICATION
+                </div>
+            </div>
+
+            <h2 style="color: #0f172a; font-size: 20px; margin-bottom: 8px; text-align: center;">
+                Maintenance de la plateforme
+            </h2>
+            <p style="color: #64748b; text-align: center; font-size: 14px; margin-bottom: 24px;">
+                Bonjour {candidate_name}, dans le cadre d'une opération de maintenance de notre plateforme,
+                votre dossier de candidature a été supprimé.
+            </p>
+
+            <div style="background: #f1f5f9; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+                <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-weight: 600;">ID Public</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-weight: 700; font-family: monospace; text-align: right;">{public_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b; font-weight: 600; border-top: 1px solid #e2e8f0;">Certification</td>
+                        <td style="padding: 8px 0; color: #0f172a; text-align: right; border-top: 1px solid #e2e8f0;">{certification}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <p style="color: #475569; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
+                Si vous souhaitez poursuivre votre candidature, vous pouvez soumettre un nouveau dossier
+                depuis notre plateforme. Nous nous excusons pour la gêne occasionnée.
+            </p>
+
+            <div style="text-align: center;">
+                <a href="{FRONTEND_URL}" style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
+                    Accéder à la plateforme
+                </a>
+            </div>
+        </div>
+
+        <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 24px;">
+            Cet email a été envoyé automatiquement par IRISQ Certification.
+        </p>
+    </div>
+    """
+    send_email(to_email, subject, html_body)

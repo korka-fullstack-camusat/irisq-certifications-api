@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kaay-mbaay-site",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:\\AROKA-TECH\\KAAY-MBAYY\\site", "run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "irisqfrontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:\\AROKA-TECH\\IRISQ\\Frontend\\irisqfrontend", "run", "dev"],
+      "port": 3001,
+      "autoPort": true
+    }
+  ]
+}
