@@ -299,16 +299,54 @@ _KNOWN_ACCENT_FIXUPS = {
     "efficacit�": "efficacité",
     "Constat�": "Constaté",
     "L�analyse": "L'analyse",
+    "renseign�es": "renseignées",
+    "Syst�me": "Système",
+    "Syst�mes": "Systèmes",
+    "syst�me": "système",
+    "syst�mes": "systèmes",
     "L�": "L'",
 }
 
+# Deuxième forme de corruption : la police ne rend AUCUN caractère pour
+# l'accent (ni glyphe, ni "�") — la lettre accentuée disparaît purement et
+# simplement, ce qui produit des mots "collés" sans accent (ex: "differentes",
+# "activites", "consignees", "Constate", "Evaluez") ou des mots coupés par un
+# espace fantôme (ex: "Consultatio n", "Laboratoir e"). On corrige ces cas
+# connus par expressions régulières (bornes de mots) car le caractère "�"
+# n'est pas présent pour servir de signal.
+_TEXT_GLITCH_PATTERNS = [
+    (r"\bConsultatio\s*n\b", "Consultation"),
+    (r"\bLaboratoir\s*e\b", "Laboratoire"),
+    (r"\bConstate\b", "Constaté"),
+    (r"\bEvaluez\b", "Évaluez"),
+    (r"\bAnalysez\b", "Analysez"),
+    (r"\bdifferentes\b", "différentes"),
+    (r"\bactivites\b", "activités"),
+    (r"\bconsignees\b", "consignées"),
+    (r"\brenseignees\b", "renseignées"),
+    (r"\bsysteme\b", "système"),
+    (r"\bsystemes\b", "systèmes"),
+    (r"\bMaitrise\b", "Maîtrise"),
+    (r"\bmaitrise\b", "maîtrise"),
+]
+
 
 def _fix_replacement_chars(text: str) -> str:
-    """Corrige les mots connus dont un accent a été rendu '�' par pdfplumber."""
-    if "�" not in text:
-        return text
-    for bad, good in _KNOWN_ACCENT_FIXUPS.items():
-        text = text.replace(bad, good)
+    """Corrige les mots connus dont l'accent a été mal rendu par pdfplumber.
+
+    Deux types de corruption coexistent dans ces PDF (police Cambria-dérivée) :
+    1. Le caractère accentué est rendu comme '�' (U+FFFD) → corrigible par
+       remplacement direct des mots connus (_KNOWN_ACCENT_FIXUPS).
+    2. Le caractère accentué disparaît complètement, sans laisser de trace
+       (ni glyphe, ni '�') → corrigible uniquement via une liste de mots/
+       motifs connus (_TEXT_GLITCH_PATTERNS), car aucun signal n'indique
+       l'endroit du problème.
+    """
+    if "�" in text:
+        for bad, good in _KNOWN_ACCENT_FIXUPS.items():
+            text = text.replace(bad, good)
+    for pattern, repl in _TEXT_GLITCH_PATTERNS:
+        text = re.sub(pattern, repl, text)
     return text
 
 
@@ -1027,7 +1065,7 @@ def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list
                 travail_table_started = True
             if travail_table_started:
                 continue
-            current_q["text"] += "\n" + line
+            current_q["text"] += "\n" + _fix_replacement_chars(line)
             continue
 
         # ── "Contexte N : …" — étude de cas : texte affiché avant les questions liées ──
@@ -1110,9 +1148,9 @@ def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list
                 continue
             # Dans une question composée, le texte continue la question principale
             if current_q.get("type") == "compound" and not current_part:
-                current_q["text"] += "\n" + line
+                current_q["text"] += "\n" + _fix_replacement_chars(line)
             elif current_q.get("type") != "compound":
-                current_q["text"] += "\n" + line
+                current_q["text"] += "\n" + _fix_replacement_chars(line)
 
     # Sauvegarder la dernière sous-question si composée
     if current_q and current_q.get("type") == "compound" and current_part:
