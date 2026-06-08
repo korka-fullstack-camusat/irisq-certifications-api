@@ -165,7 +165,9 @@
       "Bash(powershell -NoProfile -Command \"Remove-Item 'C:\\\\AROKA-TECH\\\\KAAY-MBAYY\\\\site\\\\check_render.png' -Force -ErrorAction SilentlyContinue\")",
       "Bash(.venvScriptspython.exe -c ' *)",
       "Bash(grep -n \"Chargement de la copie\\\\|exam_document\\\\|exam_answers\\\\|document_url\\\\|iframe\\\\|<embed\\\\|object\\\\|render\\\\|Blob\\\\|fetch\\\\|useEffect\\\\|copyContent\\\\|content\\\\b\" \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Backend\\\\irisqbackend\\\\..\\\\..\\\\Frontend\\\\irisqfrontend\\\\src\\\\components\\\\AnnotatedCopyModal.tsx\" | head -80)",
-      "Bash(..venvScriptspython.exe -c ' *)"
+      "Bash(..venvScriptspython.exe -c ' *)",
+      "Bash(Get-ChildItem -ErrorAction SilentlyContinue)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)"
     ]
   }
 }

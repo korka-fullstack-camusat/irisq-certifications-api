@@ -99,7 +99,7 @@ def _extract_case_study_table_html(pdf) -> str | None:
                 if headers is None and all(k in joined for k in HEADER_KEYWORDS):
                     headers = []
                     for c in cells:
-                        c = _join_wrapped(c)
+                        c = _fix_replacement_chars(_join_wrapped(c))
                         if c and c not in headers:
                             headers.append(c)
                     header_page_idx = page_idx
@@ -114,11 +114,15 @@ def _extract_case_study_table_html(pdf) -> str | None:
                         first and rest_empty
                         and not re.match(r"^(Page\s+\d|R[ée]f[ée]rence|Fiche\s+d|Implementor|Lead|Junior)", first, re.IGNORECASE)
                     ):
-                        activities.append(_join_wrapped(first))
+                        activities.append(_fix_replacement_chars(_join_wrapped(first)))
 
     if not headers or not activities:
         return None
 
+    return _build_activity_table_html(headers, activities)
+
+
+def _build_activity_table_html(headers: list[str], activities: list[str]) -> str:
     thead = "".join(
         f"<th style='border:1px solid #c7cbe0;padding:6px 8px;background:#e8eaf6;"
         f"font-size:0.78em;font-weight:700;color:#1a237e;text-align:left'>{_escape(h)}</th>"
@@ -144,9 +148,155 @@ def _extract_case_study_table_html(pdf) -> str | None:
     )
 
 
+def _extract_risk_legend_html(pdf) -> str | None:
+    """
+    Reconstruit fidèlement la légende "Probabilité (P) / Gravité (G)" + la matrice
+    de criticité colorée (P × G), affichées juste avant le tableau d'activités dans
+    la section "Maîtrise des risques des SMQ" — exactement comme dans le document
+    source (cf. capture : table de définitions des niveaux 1/2/3, puis grille
+    croisée Probabilité × Gravité avec les valeurs de criticité et leur code couleur
+    vert/jaune/rouge).
+    """
+    levels: list[tuple[str, str, str]] = []
+    found_header = False
+
+    for page in pdf.pages:
+        for table in _filtered_page_tables(page):
+            for row in table:
+                cells = [(c or "").strip().replace("\n", " ") for c in row]
+                cells = [_fix_replacement_chars(re.sub(r"\s+", " ", c)) for c in cells]
+                joined = " ".join(cells).lower().replace(" ", "")
+                if not found_header and "probabilit" in joined and "gravit" in joined and "(p)" in joined:
+                    found_header = True
+                    continue
+                if found_header and len(cells) >= 3 and re.match(r"^[123]$", cells[0]):
+                    levels.append((cells[0], cells[1], cells[2]))
+        if found_header and levels:
+            break
+
+    if not levels:
+        return None
+
+    rows_html = "".join(
+        "<tr>"
+        f"<td style='border:1px solid #c7cbe0;padding:6px 8px;font-weight:700;text-align:center;background:#e8eaf6'>{_escape(n)}</td>"
+        f"<td style='border:1px solid #c7cbe0;padding:6px 8px'>{_escape(p)}</td>"
+        f"<td style='border:1px solid #c7cbe0;padding:6px 8px'>{_escape(g)}</td>"
+        "</tr>"
+        for (n, p, g) in levels
+    )
+    legend_table = (
+        "<table style='border-collapse:collapse;font-size:0.85em'>"
+        "<thead><tr>"
+        "<th style='border:1px solid #c7cbe0;padding:6px 8px;background:#e8eaf6'></th>"
+        "<th style='border:1px solid #c7cbe0;padding:6px 8px;background:#e8eaf6;color:#1a237e;text-align:left'>Probabilité (P)</th>"
+        "<th style='border:1px solid #c7cbe0;padding:6px 8px;background:#e8eaf6;color:#1a237e;text-align:left'>Gravité (G)</th>"
+        "</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        "</table>"
+    )
+
+    # ── Matrice de criticité P × G (couleurs : vert ≤2, jaune 3-4, rouge ≥6,
+    #     conformes au code couleur observé dans le document source) ──
+    n = len(levels)
+
+    def _crit_color(value: int) -> str:
+        if value <= 2:
+            return "#57bb8a"
+        if value <= 4:
+            return "#f7e379"
+        return "#e8716d"
+
+    header_cols = "".join(
+        f"<th style='border:1px solid #c7cbe0;padding:4px 14px;background:#3f51b5;color:#fff;text-align:center'>{i}</th>"
+        for i in range(1, n + 1)
+    )
+    matrix_rows = ""
+    for g in range(1, n + 1):
+        cells = "".join(
+            f"<td style='border:1px solid #c7cbe0;padding:4px 14px;text-align:center;font-weight:700;"
+            f"color:#1a237e;background:{_crit_color(p * g)}'>{p * g}</td>"
+            for p in range(1, n + 1)
+        )
+        gravite_head = (
+            f"<th rowspan='{n}' style='border:1px solid #c7cbe0;padding:4px 6px;background:#3f51b5;"
+            f"color:#fff;text-align:center;white-space:nowrap'>Gravité</th>"
+            if g == 1 else ""
+        )
+        matrix_rows += (
+            "<tr>"
+            f"{gravite_head}"
+            f"<th style='border:1px solid #c7cbe0;padding:4px 14px;background:#3f51b5;color:#fff;text-align:center'>{g}</th>"
+            f"{cells}"
+            "</tr>"
+        )
+
+    matrix_table = (
+        "<table style='border-collapse:collapse;font-size:0.85em'>"
+        "<thead><tr>"
+        "<th colspan='2' style='border:1px solid #c7cbe0;padding:4px;background:#fff'></th>"
+        f"<th colspan='{n}' style='border:1px solid #c7cbe0;padding:4px 10px;background:#3f51b5;color:#fff;text-align:center'>Probabilité</th>"
+        "</tr></thead>"
+        f"<tbody>{matrix_rows}</tbody>"
+        "</table>"
+    )
+
+    return (
+        "<div style='margin:10px 0 16px'>"
+        "<div style='display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start'>"
+        f"{legend_table}{matrix_table}"
+        "</div>"
+        "<p style='font-size:0.85em;margin-top:10px'><strong>P</strong> : Probabilité, "
+        "<strong>G</strong> : Gravité, <strong>C</strong> : Criticité</p>"
+        "</div>"
+    )
+
+
+def _extract_case_study_html(pdf) -> str | None:
+    """
+    Assemble le bloc HTML complet de l'étude de cas "Maîtrise des risques des SMQ" :
+    légende Probabilité/Gravité + matrice de criticité, puis tableau d'activités à
+    compléter — dans cet ordre, fidèle au document source.
+    """
+    legend_html   = _extract_risk_legend_html(pdf)
+    activity_html = _extract_case_study_table_html(pdf)
+
+    if not legend_html and not activity_html:
+        return None
+
+    return (legend_html or "") + (activity_html or "")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilitaires communs
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Mots dont un caractère accentué est rendu "�" (remplacement Unicode irrécupérable)
+# par l'encodage de la police Cambria-dérivée de ce modèle de document — on les
+# corrige au cas par cas car ce sont toujours les mêmes mots qui apparaissent
+# dans la légende et le tableau "Maîtrise des risques des SMQ".
+_KNOWN_ACCENT_FIXUPS = {
+    "Probabilit�": "Probabilité",
+    "Gravit�": "Gravité",
+    "Activit�": "Activité",
+    "Crit�re": "Critère",
+    "ma�trise": "maîtrise",
+    "Ma�trise": "Maîtrise",
+    "efficacit�": "efficacité",
+    "Constat�": "Constaté",
+    "L�analyse": "L'analyse",
+    "L�": "L'",
+}
+
+
+def _fix_replacement_chars(text: str) -> str:
+    """Corrige les mots connus dont un accent a été rendu '�' par pdfplumber."""
+    if "�" not in text:
+        return text
+    for bad, good in _KNOWN_ACCENT_FIXUPS.items():
+        text = text.replace(bad, good)
+    return text
+
 
 def _escape(text: str) -> str:
     """Échappe les caractères spéciaux HTML."""
@@ -596,7 +746,7 @@ def parse_exam_document(file_path: str) -> list:
         if ext == ".pdf":
             with pdfplumber.open(file_path) as pdf:
                 raw_text = "\n".join(_extract_pdf_page_text(page) for page in pdf.pages)
-                case_study_table_html = _extract_case_study_table_html(pdf)
+                case_study_table_html = _extract_case_study_html(pdf)
         elif ext in (".doc", ".docx"):
             doc = Document(file_path)
             raw_text = "\n".join(p.text for p in doc.paragraphs)
@@ -742,6 +892,9 @@ def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> 
     # ex: Section "Maîtrise des risques des SMQ") : tout le bloc (consignes + tableau)
     # est capturé comme une question ouverte unique, car il n'y a pas de questions numérotées
     collecting_travail  = False
+    # Dès qu'on atteint la légende/tableau (zone reconstruite proprement en HTML via
+    # table_html), on arrête de recopier le texte linéarisé brut (qui serait garbled)
+    travail_table_started = False
 
     def _save():
         nonlocal current_q, current_part
@@ -806,13 +959,15 @@ def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> 
             current_context    = ""
             collecting_context = False
             collecting_travail = False
+            travail_table_started = False
             continue
 
         if kind == "SUBSECTION":
             # ── "Travail à Faire" : étude de cas basée sur un tableau à compléter ──
             # (ex : Section "Maîtrise des risques des SMQ") — il n'y a pas de questions
-            # numérotées : on capture les consignes + le tableau comme une question
-            # ouverte unique afin qu'elle soit bien affichée et réponse-able au candidat.
+            # numérotées : on capture les consignes comme une question ouverte unique,
+            # et le tableau/légende est rendu séparément en HTML fidèle (table_html)
+            # afin d'être affiché exactement comme dans le document source.
             if re.search(r"Travail\s+.{1,2}\s*[Ff]aire", line, re.IGNORECASE):
                 _save()
                 current_subsection = line
@@ -821,6 +976,7 @@ def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> 
                     current_q["table_html"] = case_study_table_html
                 current_part       = None
                 collecting_travail = True
+                travail_table_started = False
                 current_context    = ""
                 collecting_context = False
                 continue
@@ -835,10 +991,19 @@ def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> 
             current_context    = ""
             collecting_context = False
             collecting_travail = False
+            travail_table_started = False
             continue
 
-        # ── Bloc "Travail à Faire" : capturer tel quel (consignes + tableau) ──
+        # ── Bloc "Travail à Faire" : capturer les consignes telles quelles, mais
+        # arrêter dès qu'on atteint la légende/tableau (reconstruits proprement en
+        # HTML via table_html — le texte linéarisé brut serait, lui, garbled) ──
         if collecting_travail and current_q is not None:
+            if not travail_table_started and re.search(
+                r"Probabilit[ée2]?\s*\(\s*P\s*\)|^\s*P\s*:\s*Probabilit", line, re.IGNORECASE
+            ):
+                travail_table_started = True
+            if travail_table_started:
+                continue
             current_q["text"] += "\n" + line
             continue
 
