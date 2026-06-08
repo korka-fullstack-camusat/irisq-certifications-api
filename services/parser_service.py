@@ -18,6 +18,26 @@ import pdfplumber
 from docx import Document
 
 
+def _extract_pdf_page_text(page) -> str:
+    """
+    Extrait le texte d'une page PDF en filtrant les espaces fantômes de largeur nulle.
+
+    Certaines polices PDF (ex: Cambria dans les modèles d'examen IRISQ) encodent les
+    lettres accentuées (é, è, û, î…) comme la lettre nue suivie d'un caractère espace
+    de largeur 0 — pdfplumber les restitue alors comme un vrai espace, ce qui coupe
+    les mots en deux ("syste me" au lieu de "système"). On retire ces espaces fantômes
+    avant extraction pour recoller les mots correctement.
+    """
+    filtered = page.filter(
+        lambda obj: not (
+            obj.get("object_type") == "char"
+            and obj.get("text") == " "
+            and obj.get("width", 1) == 0
+        )
+    )
+    return filtered.extract_text() or ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilitaires communs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -379,7 +399,7 @@ def pdf_to_html(file_path: str) -> str:
                         f"text-transform:uppercase;letter-spacing:0.1em;"
                         f"margin:12px 0 4px'>— Page {page_num} —</p>"
                     )
-                text = page.extract_text() or ""
+                text = _extract_pdf_page_text(page)
                 for line in text.split("\n"):
                     esc = _escape(line)
                     if esc.strip():
@@ -468,7 +488,7 @@ def parse_exam_document(file_path: str) -> list:
     try:
         if ext == ".pdf":
             with pdfplumber.open(file_path) as pdf:
-                raw_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+                raw_text = "\n".join(_extract_pdf_page_text(page) for page in pdf.pages)
         elif ext in (".doc", ".docx"):
             doc = Document(file_path)
             raw_text = "\n".join(p.text for p in doc.paragraphs)
