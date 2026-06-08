@@ -568,7 +568,7 @@ def _classify_line(line: str) -> str:
         r"Questions?\s+Vrai\s*[/\\]\s*Faux|"       # "Questions Vrai/Faux"
         r"Vrai\s*[/\\]\s*Faux|"                     # "Vrai/Faux" seul
         r"[EÉ]tude\s+de\s+[Cc]as|Cas\s+[Pp]ratique|"
-        r"Travail\s+[Àà]\s+[Ff]aire|APPLICATION|"
+        r"Travail\s+.{1,2}\s*[Ff]aire|APPLICATION|"
         r"Vrai\s+[Oo]u\s+[Ff]aux|True\s+or\s+False)",
         line, re.IGNORECASE,
     ):
@@ -705,7 +705,7 @@ def parse_exam_text(raw_text: str) -> list:
             # (ex : Section "Maîtrise des risques des SMQ") — il n'y a pas de questions
             # numérotées : on capture les consignes + le tableau comme une question
             # ouverte unique afin qu'elle soit bien affichée et réponse-able au candidat.
-            if re.search(r"Travail\s+[Àà]\s+[Ff]aire", line, re.IGNORECASE):
+            if re.search(r"Travail\s+.{1,2}\s*[Ff]aire", line, re.IGNORECASE):
                 _save()
                 current_subsection = line
                 current_q          = _new_q(line, "open")
