@@ -53,7 +53,7 @@ def _filtered_page_tables(page) -> list:
         return []
 
 
-def _extract_case_study_table_html(pdf) -> str | None:
+def _extract_case_study_table_data(pdf) -> tuple[list[str], list[str]] | None:
     """
     Reconstruit fidèlement, en HTML, le tableau à compléter d'une étude de cas
     de type "Travail à faire" (ex : Section "Maîtrise des risques des SMQ" —
@@ -119,7 +119,7 @@ def _extract_case_study_table_html(pdf) -> str | None:
     if not headers or not activities:
         return None
 
-    return _build_activity_table_html(headers, activities)
+    return (headers, activities)
 
 
 def _build_activity_table_html(headers: list[str], activities: list[str]) -> str:
@@ -252,19 +252,33 @@ def _extract_risk_legend_html(pdf) -> str | None:
     )
 
 
-def _extract_case_study_html(pdf) -> str | None:
+def _extract_case_study_block(pdf) -> dict | None:
     """
-    Assemble le bloc HTML complet de l'étude de cas "Maîtrise des risques des SMQ" :
-    légende Probabilité/Gravité + matrice de criticité, puis tableau d'activités à
-    compléter — dans cet ordre, fidèle au document source.
+    Assemble le bloc complet de l'étude de cas "Maîtrise des risques des SMQ" :
+    - 'legend_html'   : légende Probabilité/Gravité + matrice de criticité (lecture seule)
+    - 'table_headers' / 'table_activities' : données structurées du tableau d'activités,
+       pour que le frontend puisse le restituer comme un véritable formulaire à
+       compléter par le candidat (un champ par cellule vide), fidèle au document source,
+       plutôt qu'un simple bloc HTML statique en lecture seule.
+    Retourne None si rien n'a pu être extrait.
     """
     legend_html   = _extract_risk_legend_html(pdf)
-    activity_html = _extract_case_study_table_html(pdf)
+    table_data    = _extract_case_study_table_data(pdf)
 
-    if not legend_html and not activity_html:
+    if not legend_html and not table_data:
         return None
 
-    return (legend_html or "") + (activity_html or "")
+    block: dict = {}
+    if legend_html:
+        block["legend_html"] = legend_html
+    if table_data:
+        headers, activities = table_data
+        block["table_headers"]    = headers
+        block["table_activities"] = activities
+        # HTML statique (lecture seule) — utilisé dans les vues d'aperçu évaluateur
+        # où le tableau n'a pas besoin d'être un formulaire interactif
+        block["table_html"] = _build_activity_table_html(headers, activities)
+    return block
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -740,13 +754,13 @@ def parse_exam_document(file_path: str) -> list:
 
     ext = os.path.splitext(file_path)[1].lower()
     raw_text = ""
-    case_study_table_html = None
+    case_study_block = None
 
     try:
         if ext == ".pdf":
             with pdfplumber.open(file_path) as pdf:
                 raw_text = "\n".join(_extract_pdf_page_text(page) for page in pdf.pages)
-                case_study_table_html = _extract_case_study_html(pdf)
+                case_study_block = _extract_case_study_block(pdf)
         elif ext in (".doc", ".docx"):
             doc = Document(file_path)
             raw_text = "\n".join(p.text for p in doc.paragraphs)
@@ -759,7 +773,7 @@ def parse_exam_document(file_path: str) -> list:
         print(f"[parse_exam_document] Erreur lecture : {e}")
         return []
 
-    return parse_exam_text(raw_text, case_study_table_html=case_study_table_html)
+    return parse_exam_text(raw_text, case_study_block=case_study_block)
 
 
 def _classify_line(line: str) -> str:
@@ -866,7 +880,7 @@ def _classify_line(line: str) -> str:
     return "TEXT"
 
 
-def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> list:
+def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list:
     """
     Parse universel : s'adapte automatiquement à tout template d'examen.
 
@@ -972,8 +986,17 @@ def parse_exam_text(raw_text: str, case_study_table_html: str | None = None) -> 
                 _save()
                 current_subsection = line
                 current_q          = _new_q(line, "open")
-                if case_study_table_html:
-                    current_q["table_html"] = case_study_table_html
+                if case_study_block:
+                    if case_study_block.get("legend_html"):
+                        current_q["legend_html"] = case_study_block["legend_html"]
+                    if case_study_block.get("table_headers") and case_study_block.get("table_activities"):
+                        # Données structurées → le candidat les complète via un vrai
+                        # formulaire interactif (un champ par cellule vide)
+                        current_q["table_headers"]    = case_study_block["table_headers"]
+                        current_q["table_activities"] = case_study_block["table_activities"]
+                    if case_study_block.get("table_html"):
+                        # HTML statique de secours / aperçu en lecture seule (évaluateur)
+                        current_q["table_html"] = case_study_block["table_html"]
                 current_part       = None
                 collecting_travail = True
                 travail_table_started = False
