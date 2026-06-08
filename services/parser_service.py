@@ -630,6 +630,10 @@ def parse_exam_text(raw_text: str) -> list:
     # Pour les études de cas : "Contexte N : <texte>" affiché avant chaque question liée
     current_context     = ""
     collecting_context  = False
+    # Pour les études de cas basées sur un tableau à compléter ("Travail à Faire" + tableau,
+    # ex: Section "Maîtrise des risques des SMQ") : tout le bloc (consignes + tableau)
+    # est capturé comme une question ouverte unique, car il n'y a pas de questions numérotées
+    collecting_travail  = False
 
     def _save():
         nonlocal current_q, current_part
@@ -693,9 +697,24 @@ def parse_exam_text(raw_text: str) -> list:
             in_vraifaux_section = False
             current_context    = ""
             collecting_context = False
+            collecting_travail = False
             continue
 
         if kind == "SUBSECTION":
+            # ── "Travail à Faire" : étude de cas basée sur un tableau à compléter ──
+            # (ex : Section "Maîtrise des risques des SMQ") — il n'y a pas de questions
+            # numérotées : on capture les consignes + le tableau comme une question
+            # ouverte unique afin qu'elle soit bien affichée et réponse-able au candidat.
+            if re.search(r"Travail\s+[Àà]\s+[Ff]aire", line, re.IGNORECASE):
+                _save()
+                current_subsection = line
+                current_q          = _new_q(line, "open")
+                current_part       = None
+                collecting_travail = True
+                current_context    = ""
+                collecting_context = False
+                continue
+
             _save()
             current_subsection  = line
             # Détecter section Vrai/Faux
@@ -705,6 +724,12 @@ def parse_exam_text(raw_text: str) -> list:
             ))
             current_context    = ""
             collecting_context = False
+            collecting_travail = False
+            continue
+
+        # ── Bloc "Travail à Faire" : capturer tel quel (consignes + tableau) ──
+        if collecting_travail and current_q is not None:
+            current_q["text"] += "\n" + line
             continue
 
         # ── "Contexte N : …" — étude de cas : texte affiché avant les questions liées ──

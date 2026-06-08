@@ -164,7 +164,8 @@
       "Bash(powershell -NoProfile -Command \"Remove-Item 'C:\\\\AROKA-TECH\\\\KAAY-MBAYY\\\\site\\\\tmp_logo_b64.txt','C:\\\\AROKA-TECH\\\\KAAY-MBAYY\\\\site\\\\tmp_optimized_logo.png' -Force -ErrorAction SilentlyContinue\")",
       "Bash(powershell -NoProfile -Command \"Remove-Item 'C:\\\\AROKA-TECH\\\\KAAY-MBAYY\\\\site\\\\check_render.png' -Force -ErrorAction SilentlyContinue\")",
       "Bash(.venvScriptspython.exe -c ' *)",
-      "Bash(grep -n \"Chargement de la copie\\\\|exam_document\\\\|exam_answers\\\\|document_url\\\\|iframe\\\\|<embed\\\\|object\\\\|render\\\\|Blob\\\\|fetch\\\\|useEffect\\\\|copyContent\\\\|content\\\\b\" \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Backend\\\\irisqbackend\\\\..\\\\..\\\\Frontend\\\\irisqfrontend\\\\src\\\\components\\\\AnnotatedCopyModal.tsx\" | head -80)"
+      "Bash(grep -n \"Chargement de la copie\\\\|exam_document\\\\|exam_answers\\\\|document_url\\\\|iframe\\\\|<embed\\\\|object\\\\|render\\\\|Blob\\\\|fetch\\\\|useEffect\\\\|copyContent\\\\|content\\\\b\" \"C:\\\\AROKA-TECH\\\\IRISQ\\\\Backend\\\\irisqbackend\\\\..\\\\..\\\\Frontend\\\\irisqfrontend\\\\src\\\\components\\\\AnnotatedCopyModal.tsx\" | head -80)",
+      "Bash(..venvScriptspython.exe -c ' *)"
     ]
   }
 }
