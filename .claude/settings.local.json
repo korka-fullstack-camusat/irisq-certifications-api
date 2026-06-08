@@ -173,7 +173,10 @@
       "PowerShell(Get-Process | Where-Object { $_.ProcessName -match 'python|uvicorn' } | Select-Object Id,ProcessName,Path,StartTime | Format-Table -AutoSize)",
       "Bash(git check-ignore *)",
       "Bash(xargs -I{} git show {}:services/parser_service.py)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(./.venv/Scripts/python.exe _debug_table_html.py)",
+      "Bash(xargs -I{} git show {}:src/app/examen/\\\\[token\\\\]/page.tsx)",
+      "Bash(grep -n \"table_html\\\\|whitespace-pre-wrap\\\\|q.text\\\\|q\\\\.part\\\\|Suivant\\\\|Page.*\\\\/.*questions\\\\|Précédent\" src/app/candidat/examen/page.tsx)"
     ]
   }
 }
