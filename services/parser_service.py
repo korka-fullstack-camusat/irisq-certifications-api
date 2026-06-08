@@ -627,6 +627,9 @@ def parse_exam_text(raw_text: str) -> list:
     # Pour les questions composées Vrai/Faux
     in_vraifaux_section = False
     current_part: dict | None = None   # sous-question courante (a/b/c)
+    # Pour les études de cas : "Contexte N : <texte>" affiché avant chaque question liée
+    current_context     = ""
+    collecting_context  = False
 
     def _save():
         nonlocal current_q, current_part
@@ -688,6 +691,8 @@ def parse_exam_text(raw_text: str) -> list:
             current_section    = line
             current_subsection = ""
             in_vraifaux_section = False
+            current_context    = ""
+            collecting_context = False
             continue
 
         if kind == "SUBSECTION":
@@ -698,11 +703,23 @@ def parse_exam_text(raw_text: str) -> list:
                 r"Vrai\s*/\s*Faux|Vraifaux|True\s*/\s*False",
                 line, re.IGNORECASE
             ))
+            current_context    = ""
+            collecting_context = False
+            continue
+
+        # ── "Contexte N : …" — étude de cas : texte affiché avant les questions liées ──
+        if re.match(r"^Contexte\s*\d+\s*[:.]", line, re.IGNORECASE):
+            _save()
+            current_context    = line
+            collecting_context = True
             continue
 
         if kind == "QUESTION":
             _save()
             clean_text = re.sub(r"^(\d{1,2})[.)]\s*", "", line).strip()
+            if current_context:
+                clean_text = f"{current_context}\n\n{clean_text}"
+            collecting_context = False
             if in_vraifaux_section:
                 # Question composée : main text + sous-questions a/b/c à venir
                 current_q   = _new_q(clean_text, "compound")
@@ -755,6 +772,13 @@ def parse_exam_text(raw_text: str) -> list:
                 opt = _opt_text(line)
                 if opt:
                     current_q["options"].append(opt)
+            continue
+
+        # ── Accumulation du texte de contexte (paragraphe sous "Contexte N :") ──
+        if collecting_context:
+            # Exclure l'en-tête "Questions d'évaluation" qui suit le paragraphe
+            if not re.match(r"^Questions?\s+d.[ée]valuation", line, re.IGNORECASE):
+                current_context += "\n" + line
             continue
 
         # TEXT : continuation du texte de question
