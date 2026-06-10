@@ -177,7 +177,10 @@
       "Bash(./.venv/Scripts/python.exe _debug_table_html.py)",
       "Bash(xargs -I{} git show {}:src/app/examen/\\\\[token\\\\]/page.tsx)",
       "Bash(grep -n \"table_html\\\\|whitespace-pre-wrap\\\\|q.text\\\\|q\\\\.part\\\\|Suivant\\\\|Page.*\\\\/.*questions\\\\|Précédent\" src/app/candidat/examen/page.tsx)",
-      "Bash(vercel ls *)"
+      "Bash(vercel ls *)",
+      "Bash(dir \"C:\\\\CAMUSAT\\\\Codes\\\\Projets\\\\Rh-App\" /b)",
+      "Bash(timeout 8 docker logs -f erh-app-backend-web-1)",
+      "Bash(Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue)"
     ]
   }
 }

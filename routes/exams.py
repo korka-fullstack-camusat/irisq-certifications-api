@@ -203,6 +203,38 @@ async def delete_exam(id: str, current_user: UserOut = Depends(require_role(["RH
         
     raise HTTPException(status_code=404, detail=f"Exam {id} not found")
 
+class UpdateExamBody(BaseModel):
+    title: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
+
+@router.patch("/exams/{id}", response_description="Update exam title and/or duration")
+async def update_exam(
+    id: str,
+    body: UpdateExamBody,
+    current_user: UserOut = Depends(require_role(["RH", "EVALUATEUR"])),
+):
+    db = get_database()
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid exam ID format")
+
+    update_fields = {}
+    if body.title is not None and body.title.strip():
+        update_fields["title"] = body.title.strip()
+    if body.duration_minutes is not None:
+        update_fields["duration_minutes"] = body.duration_minutes
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+
+    result = await db["exams"].update_one({"_id": ObjectId(id)}, {"$set": update_fields})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail=f"Exam {id} not found")
+
+    updated = await db["exams"].find_one({"_id": ObjectId(id)})
+    return {"message": "Exam updated successfully", "exam": serialize_doc(updated)}
+
+
 class PublishExamBody(BaseModel):
     selected_response_ids: Optional[List[str]] = None  # None = tous les approuvés
 
