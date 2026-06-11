@@ -206,9 +206,10 @@ async def delete_exam(id: str, current_user: UserOut = Depends(require_role(["RH
 class UpdateExamBody(BaseModel):
     title: Optional[str] = None
     duration_minutes: Optional[int] = None
+    deadline: Optional[str] = None  # "YYYY-MM-DD" ; "" ou null => supprime la date limite
 
 
-@router.patch("/exams/{id}", response_description="Update exam title and/or duration")
+@router.patch("/exams/{id}", response_description="Update exam title, duration and/or deadline")
 async def update_exam(
     id: str,
     body: UpdateExamBody,
@@ -218,16 +219,30 @@ async def update_exam(
     if not ObjectId.is_valid(id):
         raise HTTPException(status_code=400, detail="Invalid exam ID format")
 
+    fields_set = body.model_fields_set
     update_fields = {}
+    unset_fields = {}
+
     if body.title is not None and body.title.strip():
         update_fields["title"] = body.title.strip()
     if body.duration_minutes is not None:
         update_fields["duration_minutes"] = body.duration_minutes
+    if "deadline" in fields_set:
+        if body.deadline:
+            update_fields["deadline"] = body.deadline
+        else:
+            unset_fields["deadline"] = ""
 
-    if not update_fields:
+    if not update_fields and not unset_fields:
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
 
-    result = await db["exams"].update_one({"_id": ObjectId(id)}, {"$set": update_fields})
+    update_ops = {}
+    if update_fields:
+        update_ops["$set"] = update_fields
+    if unset_fields:
+        update_ops["$unset"] = unset_fields
+
+    result = await db["exams"].update_one({"_id": ObjectId(id)}, update_ops)
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail=f"Exam {id} not found")
 
