@@ -328,6 +328,13 @@ _TEXT_GLITCH_PATTERNS = [
     (r"\bsystemes\b", "systèmes"),
     (r"\bMaitrise\b", "Maîtrise"),
     (r"\bmaitrise\b", "maîtrise"),
+    (r"\bHopital\b", "Hôpital"),
+    (r"\bhopital\b", "hôpital"),
+    (r"\betablissement\b", "établissement"),
+    (r"\bsante\b", "santé"),
+    (r"\bMalgre\b", "Malgré"),
+    (r"\bqualite\b", "qualité"),
+    (r"\bproblemes\b", "problèmes"),
 ]
 
 
@@ -1023,7 +1030,14 @@ def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list
             if re.search(r"Travail\s+.{1,2}\s*[Ff]aire", line, re.IGNORECASE):
                 _save()
                 current_subsection = line
-                current_q          = _new_q(line, "open")
+                q_text = line
+                if current_context.strip():
+                    # Paragraphe descriptif de l'étude de cas ("Etude de Cas (25 points)"
+                    # suivi du contexte) capturé entre le titre de la sous-section et
+                    # "Travail à Faire" — on l'affiche avant les consignes pour qu'il
+                    # apparaisse dans l'aperçu évaluateur et côté candidat.
+                    q_text = f"{current_context.strip()}\n\n{line}"
+                current_q          = _new_q(q_text, "open")
                 if case_study_block:
                     if case_study_block.get("legend_html"):
                         current_q["legend_html"] = case_study_block["legend_html"]
@@ -1050,7 +1064,12 @@ def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list
                 line, re.IGNORECASE
             ))
             current_context    = ""
-            collecting_context = False
+            # "Étude de Cas" / "Cas pratique" sont suivis d'un paragraphe descriptif
+            # (sans préfixe "Contexte N :") avant la première question ou le bloc
+            # "Travail à Faire" — on le capture comme contexte pour qu'il soit affiché.
+            collecting_context = bool(re.search(
+                r"[EÉ]tude\s+de\s+[Cc]as|Cas\s+[Pp]ratique", line, re.IGNORECASE
+            ))
             collecting_travail = False
             travail_table_started = False
             continue
@@ -1139,7 +1158,7 @@ def parse_exam_text(raw_text: str, case_study_block: dict | None = None) -> list
         if collecting_context:
             # Exclure l'en-tête "Questions d'évaluation" qui suit le paragraphe
             if not re.match(r"^Questions?\s+d.[ée]valuation", line, re.IGNORECASE):
-                current_context += "\n" + line
+                current_context += "\n" + _fix_replacement_chars(line)
             continue
 
         # TEXT : continuation du texte de question
