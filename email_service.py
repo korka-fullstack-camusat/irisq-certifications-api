@@ -255,6 +255,15 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
             </div>
         """
 
+    login_button = "" if status == "rejected" else (
+        f'<div style="text-align: center; margin-top: 8px;">'
+        f'<a href="{FRONTEND_URL}/candidat/login"'
+        f' style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px;'
+        f' border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">'
+        f'Accéder à mon espace candidat'
+        f'</a></div>'
+    )
+
     html_body = f"""
     <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8fafc; padding: 32px;">
         <div style="background: white; border-radius: 16px; padding: 32px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -302,14 +311,7 @@ def notify_candidate_status_update(to_email: str, public_id: str, status: str, c
                 </p>
             </div>
 
-            {"" if status == "rejected" else f"""
-            <div style="text-align: center; margin-top: 8px;">
-                <a href="{FRONTEND_URL}/candidat/login"
-                   style="display: inline-block; background: #1a237e; color: white; padding: 13px 36px; border-radius: 10px; text-decoration: none; font-size: 14px; font-weight: 700; letter-spacing: 0.03em;">
-                    Accéder à mon espace candidat
-                </a>
-            </div>
-            """}
+            {login_button}
         </div>
 
         <p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 24px;">
