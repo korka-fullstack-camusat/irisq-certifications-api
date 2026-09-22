@@ -7,6 +7,32 @@ from dependencies.auth import require_role
 
 router = APIRouter()
 
+DEFAULT_FORMATIONS = [
+    "Junior Implementor ISO/IEC17025:2017",
+    "Implementor ISO/IEC17025:2017",
+    "Lead Implementor ISO/IEC17025:2017",
+    "Junior Implementor ISO 9001:2015",
+    "Implementor ISO 9001:2015",
+    "Lead Implementor ISO 9001:2015",
+    "Junior Implementor ISO 14001:2015",
+    "Implementor ISO 14001:2015",
+    "Lead Implementor ISO 14001:2015",
+    "Junior Implementor ISO 45001:2018",
+    "Implementor ISO 45001:2018",
+    "Lead Implementor ISO 45001:2018",
+]
+
+
+async def _seed_defaults(db):
+    """Insert default formations if the collection is empty."""
+    count = await db["formations"].count_documents({})
+    if count == 0:
+        now = datetime.utcnow()
+        await db["formations"].insert_many([
+            {"title": t, "description": None, "is_active": True, "created_at": now}
+            for t in DEFAULT_FORMATIONS
+        ])
+
 
 def _fmt(f: dict) -> FormationOut:
     created = f.get("created_at")
@@ -23,10 +49,11 @@ def _fmt(f: dict) -> FormationOut:
 async def list_formations(active_only: bool = False):
     """Liste des formations — public pour le formulaire de demande."""
     db = get_database()
+    await _seed_defaults(db)
     query: dict = {}
     if active_only:
         query["is_active"] = True
-    formations = await db["formations"].find(query).sort("created_at", -1).to_list(500)
+    formations = await db["formations"].find(query).sort("title", 1).to_list(500)
     return [_fmt(f) for f in formations]
 
 
